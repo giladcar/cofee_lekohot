@@ -23,24 +23,22 @@ export default function HomePage() {
     setLoading(true);
     setError("");
     const cleanEmail = emailInput.trim().toLowerCase();
-    const generated = String(Math.floor(100000 + Math.random() * 900000));
 
     try {
       const res = await fetch("/api/send-code", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: cleanEmail, code: generated }),
+        body: JSON.stringify({ email: cleanEmail }),
       });
       const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.error || "שגיאה בשליחת הקוד");
+      if (!res.ok || data.success === false) {
+        throw new Error(data.error || "שגיאה בשליחת הקוד");
+      }
 
-      // שומר גיבוי מקומי למקרה שהשרת החזיר קוד משלו או השתמש בקוד שנשלח
-      const actualCode = String(data.code || generated).trim();
       sessionStorage.setItem("pending_login_email", cleanEmail);
-      sessionStorage.setItem("pending_login_code", actualCode);
       setStep("code");
-    } catch {
-      setError("לא הצלחנו לשלוח קוד למייל. בדוק את כתובת המייל ונסה שוב.");
+    } catch (err: any) {
+      setError(err.message || "לא הצלחנו לשלוח קוד למייל. נסה שוב.");
     } finally {
       setLoading(false);
     }
@@ -55,28 +53,32 @@ export default function HomePage() {
       .trim()
       .toLowerCase();
     const entered = codeInput.trim();
-    const localExpected = sessionStorage.getItem("pending_login_code");
 
     try {
-      let isValid = Boolean(localExpected && entered === localExpected);
+      let isValid = false;
 
-      // בדיקה גם מול Firestore למקרה שהשרת שמר שם את הקוד
-      if (!isValid && cleanEmail) {
-        const snap = await getDoc(doc(db, "verification_codes", cleanEmail));
-        if (snap.exists() && String(snap.data().code).trim() === entered) {
-          isValid = true;
+      // בדיקה מול barber_otps (האוסף שבו route.ts שומר את otpCode) וגם coffee_otps ליתר ביטחון
+      for (const collectionName of ["barber_otps", "coffee_otps"]) {
+        const snap = await getDoc(doc(db, collectionName, cleanEmail));
+        if (snap.exists()) {
+          const data = snap.data();
+          const savedCode = String(data.otpCode || data.code || "").trim();
+          const isNotExpired = !data.otpExpiry || Date.now() < data.otpExpiry;
+          if (savedCode === entered && isNotExpired) {
+            isValid = true;
+            break;
+          }
         }
       }
 
       if (isValid) {
         localStorage.setItem("coffee_user_email", cleanEmail);
-        sessionStorage.removeItem("pending_login_code");
         setUserEmail(cleanEmail);
       } else {
-        setError("קוד שגוי, נסה שוב.");
+        setError("קוד שגוי או שפג תוקפו, נסה שוב.");
       }
     } catch {
-      setError("שגיאה באימות הקוד, נסה שוב.");
+      setError("שגיאה באימות הקוד מול השרת, נסה שוב.");
     } finally {
       setLoading(false);
     }
@@ -95,14 +97,14 @@ export default function HomePage() {
 
   return (
     <div
-      className="min-h-screen flex items-center justify-center p-4 bg-stone-950 text-stone-100"
+      className="min-h-screen flex items-center justify-center p-4 bg-zinc-950 text-zinc-100"
       dir="rtl"
     >
-      <div className="max-w-sm w-full bg-stone-900 border border-stone-800 rounded-3xl p-7 space-y-6 shadow-2xl">
+      <div className="max-w-sm w-full bg-zinc-900 border border-zinc-800 rounded-3xl p-7 space-y-6 shadow-2xl">
         <div className="text-center space-y-1.5">
           <div className="text-5xl mb-2">☕</div>
           <h1 className="text-2xl font-black text-amber-400">עגלת הקפה</h1>
-          <p className="text-xs text-stone-400">התחברות מהירה להזמנת קפה ומאפים</p>
+          <p className="text-xs text-zinc-400">התחברות מהירה להזמנת קפה ומאפים</p>
         </div>
 
         {error && (
@@ -114,7 +116,7 @@ export default function HomePage() {
         {step === "email" ? (
           <form onSubmit={handleSendCode} className="space-y-4">
             <div>
-              <label className="block text-xs text-stone-400 mb-1.5">כתובת אימייל</label>
+              <label className="block text-xs text-zinc-400 mb-1.5">כתובת אימייל</label>
               <input
                 type="email"
                 required
@@ -122,20 +124,20 @@ export default function HomePage() {
                 onChange={(e) => setEmailInput(e.target.value)}
                 placeholder="name@example.com"
                 dir="ltr"
-                className="w-full bg-stone-800 border border-stone-700 rounded-xl px-4 py-3 text-sm text-white focus:outline-none focus:border-amber-500"
+                className="w-full bg-zinc-800 border border-zinc-700 rounded-xl px-4 py-3 text-sm text-white focus:outline-none focus:border-amber-500"
               />
             </div>
             <button
               type="submit"
               disabled={loading}
-              className="w-full py-3.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-stone-950 font-black text-sm transition cursor-pointer shadow-lg"
+              className="w-full py-3.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-zinc-950 font-black text-sm transition cursor-pointer shadow-lg"
             >
               {loading ? "שולח קוד..." : "שלח קוד אימות למייל"}
             </button>
           </form>
         ) : (
           <form onSubmit={handleVerifyCode} className="space-y-4">
-            <p className="text-xs text-stone-300 text-center">
+            <p className="text-xs text-zinc-300 text-center">
               שלחנו קוד בן 6 ספרות אל <strong className="text-amber-400">{emailInput}</strong>
             </p>
             <input
@@ -146,12 +148,12 @@ export default function HomePage() {
               onChange={(e) => setCodeInput(e.target.value)}
               placeholder="הזן קוד 6 ספרות"
               dir="ltr"
-              className="w-full bg-stone-800 border border-stone-700 rounded-xl px-4 py-3 text-center tracking-widest font-mono text-xl text-white focus:outline-none focus:border-amber-500"
+              className="w-full bg-zinc-800 border border-zinc-700 rounded-xl px-4 py-3 text-center tracking-widest font-mono text-xl text-white focus:outline-none focus:border-amber-500"
             />
             <button
               type="submit"
               disabled={loading}
-              className="w-full py-3.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-stone-950 font-black text-sm transition cursor-pointer shadow-lg"
+              className="w-full py-3.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-zinc-950 font-black text-sm transition cursor-pointer shadow-lg"
             >
               {loading ? "מאמת..." : "כניסה לתפריט ←"}
             </button>
@@ -161,7 +163,7 @@ export default function HomePage() {
                 setStep("email");
                 setError("");
               }}
-              className="w-full text-xs text-stone-400 hover:text-white cursor-pointer"
+              className="w-full text-xs text-zinc-400 hover:text-white cursor-pointer"
             >
               החלף כתובת מייל
             </button>
