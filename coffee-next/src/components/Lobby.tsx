@@ -22,22 +22,33 @@ import ReviewWidget from "./ReviewWidget";
 interface MenuItem {
   id: string;
   name: string;
-  category: string;
+  description?: string;
+  optionsText?: string;
   price: number;
-  hasMilkOption?: boolean;
+  imageUrl?: string;
   inStock?: boolean;
+}
+
+interface MenuCategory {
+  id: string;
+  name: string;
+  parentId: string | null;
+  items?: MenuItem[];
+}
+
+interface DayHours {
+  isOpen: boolean;
+  open: string;
+  close: string;
 }
 
 interface SettingsData {
   isCartClosed?: boolean;
-  startTime?: string;
-  endTime?: string;
-  interval?: number;
-  maxOrdersPerSlot?: number;
+  weeklyHours?: Record<string, DayHours>;
   cartPhone?: string;
   wazeLink?: string;
   announcement?: string;
-  menuItems?: MenuItem[];
+  categories?: MenuCategory[];
 }
 
 interface OrderDoc {
@@ -63,17 +74,16 @@ export default function Lobby({
 }) {
   const [settings, setSettings] = useState<SettingsData>({});
   const [myOrders, setMyOrders] = useState<OrderDoc[]>([]);
-  const [allTodayOrders, setAllTodayOrders] = useState<OrderDoc[]>([]);
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
   // תהליך הזמנה
   const [step, setStep] = useState<1 | 2 | 3>(1);
-  const [selectedCategory, setSelectedCategory] = useState<string>("all");
+  const [activeCatId, setActiveCatId] = useState<string | null>(null);
   const [cart, setCart] = useState<CartItem[]>([]);
 
   // חלון התאמה אישית לפריט
   const [customizingItem, setCustomizingItem] = useState<MenuItem | null>(null);
-  const [milkChoice, setMilkChoice] = useState("חלב רגיל");
+  const [selectedOption, setSelectedOption] = useState("");
   const [itemNote, setItemNote] = useState("");
 
   // תאריך ושעה
@@ -88,7 +98,7 @@ export default function Lobby({
   const [submitting, setSubmitting] = useState(false);
   const [orderSuccess, setOrderSuccess] = useState(false);
 
-  // 1. האזנה להגדרות ותפריט
+  // 1. האזנה להגדרות, שעות פעילות וקטגוריות
   useEffect(() => {
     return onSnapshot(doc(db, "config", "settings"), (snap) => {
       if (snap.exists()) {
@@ -119,14 +129,6 @@ export default function Lobby({
     });
   }, [userEmail]);
 
-  // 4. הזמנות לתאריך הנבחר לחישוב עומס חלונות זמן
-  useEffect(() => {
-    const q = query(collection(db, "orders"), where("date", "==", selectedDate));
-    return onSnapshot(q, (snap) => {
-      setAllTodayOrders(snap.docs.map((d) => ({ id: d.id, ...d.data() } as OrderDoc)));
-    });
-  }, [selectedDate]);
-
   const activeOrders = myOrders.filter((o) =>
     ["pending", "preparing", "ready"].includes(o.status)
   );
@@ -136,12 +138,36 @@ export default function Lobby({
   );
   const lastCompletedOrder = myOrders.find((o) => o.status !== "canceled_by_admin");
 
-  // הוספה לסל
+  const categories = settings.categories || [];
+  const currentCategory = activeCatId
+    ? categories.find((c) => c.id === activeCatId) || null
+    : null;
+  const visibleSubCategories = categories.filter(
+    (c) => (c.parentId || null) === (activeCatId || null)
+  );
+
+  // מסלול ניווט קטגוריות
+  const getBreadcrumbs = () => {
+    const path: MenuCategory[] = [];
+    let curr = currentCategory;
+    while (curr) {
+      path.unshift(curr);
+      curr = curr.parentId ? categories.find((c) => c.id === curr!.parentId) || null : null;
+    }
+    return path;
+  };
+
+  // בחירת פריט מהתפריט
   const handleSelectMenuItem = (item: MenuItem) => {
     if (item.inStock === false) return;
-    if (item.hasMilkOption) {
+    const opts = (item.optionsText || "")
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
+
+    if (opts.length > 0) {
       setCustomizingItem(item);
-      setMilkChoice("חלב רגיל");
+      setSelectedOption(opts[0]);
       setItemNote("");
     } else {
       addToCart({
@@ -184,36 +210,34 @@ export default function Lobby({
   const totalPrice = cart.reduce((sum, item) => sum + item.price * item.quantity, 0);
   const totalItemsCount = cart.reduce((sum, item) => sum + item.quantity, 0);
 
-  // יצירת חלונות זמן פנויים
+  // חישוב שעות איסוף לפי היום בשבוע שהוגדר באדמין
   const generateTimeSlots = () => {
-    const start = settings.startTime || "07:30";
-    const end = settings.endTime || "15:00";
-    const stepMin = settings.interval || 10;
-    const maxPerSlot = settings.maxOrdersPerSlot || 4;
+    const dateObj = new Date(selectedDate + "T00:00:00");
+    const dayKey = String(dateObj.getDay());
+    const dayCfg = settings.weeklyHours?.[dayKey] || {
+      isOpen: true,
+      open: "07:30",
+      close: "15:00",
+    };
 
-    const [sh, sm] = start.split(":").map(Number);
-    const [eh, em] = end.split(":").map(Number);
+    if (!dayCfg.isOpen) return [];
+
+    const [sh, sm] = (dayCfg.open || "07:30").split(":").map(Number);
+    const [eh, em] = (dayCfg.close || "15:00").split(":").map(Number);
     let cur = sh * 60 + sm;
     const endTotal = eh * 60 + em;
 
     const now = new Date();
     const nowMinutes = now.getHours() * 60 + now.getMinutes();
 
-    const slots: { time: string; available: number }[] = [];
+    const slots: string[] = [];
     while (cur < endTotal) {
       if (selectedDate !== todayStr || cur >= nowMinutes + 5) {
         const hh = String(Math.floor(cur / 60)).padStart(2, "0");
         const mm = String(cur % 60).padStart(2, "0");
-        const timeStr = `${hh}:${mm}`;
-        const taken = allTodayOrders.filter(
-          (o) => o.pickupTime === timeStr && o.status !== "canceled_by_admin"
-        ).length;
-        const available = Math.max(0, maxPerSlot - taken);
-        if (available > 0) {
-          slots.push({ time: timeStr, available });
-        }
+        slots.push(`${hh}:${mm}`);
       }
-      cur += stepMin;
+      cur += 10;
     }
     return slots;
   };
@@ -264,19 +288,20 @@ export default function Lobby({
     await updateDoc(doc(db, "orders", orderId), { status: "canceled" });
   };
 
-  // ימים קרובים לבחירה (7 ימים)
+  // 7 ימים קרובים לבחירה (תוך התחשבות בימים סגורים באדמין)
   const upcomingDays = Array.from({ length: 7 }, (_, i) => {
     const d = new Date();
     d.setDate(d.getDate() + i);
     const iso = d.toISOString().split("T")[0];
+    const dayKey = String(d.getDay());
+    const dayCfg = settings.weeklyHours?.[dayKey];
+    const isDayOpen = dayCfg ? dayCfg.isOpen : true;
     const dayName = d.toLocaleDateString("he-IL", { weekday: "short" });
     const dayNum = d.toLocaleDateString("he-IL", { day: "2-digit", month: "2-digit" });
-    return { iso, dayName, dayNum, isToday: i === 0 };
+    return { iso, dayName, dayNum, isToday: i === 0, isDayOpen };
   });
 
-  const menuItems = (settings.menuItems || []).filter(
-    (m) => selectedCategory === "all" || m.category === selectedCategory
-  );
+  const timeSlots = generateTimeSlots();
 
   return (
     <div className="min-h-screen pb-28">
@@ -380,70 +405,102 @@ export default function Lobby({
           ))}
         </div>
 
-        {/* שלב 1: בחירת תפריט */}
+        {/* שלב 1: בחירת תפריט היררכי */}
         {step === 1 && (
           <div className="space-y-4">
-            {/* קטגוריות */}
-            <div className="flex flex-wrap gap-2">
-              {[
-                { id: "all", label: "הכל" },
-                { id: "hot_coffee", label: "☕ קפה חם" },
-                { id: "cold_coffee", label: "🧊 קפה קר" },
-                { id: "pastries", label: "🥐 מאפים" },
-                { id: "sandwiches", label: "🥪 כריכים" },
-              ].map((cat) => (
-                <button
-                  key={cat.id}
-                  onClick={() => setSelectedCategory(cat.id)}
-                  className={`px-3.5 py-2 rounded-xl text-xs sm:text-sm font-bold border transition cursor-pointer ${
-                    selectedCategory === cat.id
-                      ? "bg-amber-500 text-stone-950 border-amber-400"
-                      : "bg-stone-900 text-stone-300 border-stone-800 hover:border-stone-700"
-                  }`}
-                >
-                  {cat.label}
-                </button>
+            {/* שורת ניווט בקטגוריות */}
+            <div className="flex flex-wrap items-center gap-2 bg-stone-900 px-3.5 py-2.5 rounded-xl border border-stone-800 text-xs">
+              <button
+                onClick={() => setActiveCatId(null)}
+                className={`font-bold cursor-pointer ${
+                  !activeCatId ? "text-amber-400" : "text-stone-300 hover:text-white"
+                }`}
+              >
+                🏠 תפריט ראשי
+              </button>
+              {getBreadcrumbs().map((c) => (
+                <React.Fragment key={c.id}>
+                  <span className="text-stone-600">/</span>
+                  <button
+                    onClick={() => setActiveCatId(c.id)}
+                    className={`font-bold cursor-pointer ${
+                      c.id === activeCatId ? "text-amber-400" : "text-stone-300 hover:text-white"
+                    }`}
+                  >
+                    {c.name}
+                  </button>
+                </React.Fragment>
               ))}
             </div>
 
-            {/* כרטיסי תפריט */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              {menuItems.length === 0 ? (
-                <div className="col-span-full text-center py-10 text-stone-400 bg-stone-900 rounded-2xl border border-stone-800">
-                  התפריט מתעדכן כרגע... ☕
-                </div>
-              ) : (
-                menuItems.map((item) => {
+            {/* כפתורי קטגוריות / תתי-קטגוריות */}
+            {visibleSubCategories.length > 0 && (
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                {visibleSubCategories.map((cat) => (
+                  <button
+                    key={cat.id}
+                    onClick={() => setActiveCatId(cat.id)}
+                    className="bg-stone-900 hover:border-amber-500 border border-stone-800 rounded-2xl p-4 text-right transition cursor-pointer shadow"
+                  >
+                    <div className="font-black text-base text-white">📁 {cat.name}</div>
+                    <div className="text-xs text-amber-400 mt-1">כניסה לקטגוריה ←</div>
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {/* פריטים להזמנה בתוך הקטגוריה הנוכחית */}
+            {currentCategory && (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2">
+                {(currentCategory.items || []).map((item) => {
                   const out = item.inStock === false;
                   return (
                     <button
                       key={item.id}
                       disabled={out || settings.isCartClosed}
                       onClick={() => handleSelectMenuItem(item)}
-                      className={`text-right p-4 rounded-2xl border flex items-center justify-between transition ${
+                      className={`text-right p-4 rounded-2xl border flex items-center justify-between gap-3 transition ${
                         out
                           ? "bg-stone-900/40 border-stone-800 opacity-50 cursor-not-allowed"
                           : "bg-stone-900 hover:border-amber-500 border-stone-800 cursor-pointer"
                       }`}
                     >
-                      <div>
-                        <div className="font-bold text-white text-base">{item.name}</div>
-                        <div className="text-xs text-stone-400 mt-0.5">
-                          {out
-                            ? "❌ אזל מהמלאי להיום"
-                            : item.hasMilkOption
-                            ? "לחץ לבחירת סוג חלב והוספה"
-                            : "לחץ להוספה לסל"}
+                      <div className="flex items-center gap-3">
+                        {item.imageUrl && (
+                          <img
+                            src={item.imageUrl}
+                            alt={item.name}
+                            className="w-16 h-16 rounded-xl object-cover border border-stone-700 shrink-0"
+                          />
+                        )}
+                        <div>
+                          <div className="font-bold text-white text-base">{item.name}</div>
+                          {item.description && (
+                            <p className="text-xs text-stone-400 mt-0.5">{item.description}</p>
+                          )}
+                          <div className="text-[11px] text-amber-400/90 mt-1">
+                            {out
+                              ? "❌ אזל מהמלאי להיום"
+                              : item.optionsText
+                              ? `אפשרויות: ${item.optionsText}`
+                              : "+ לחץ להוספה לסל"}
+                          </div>
                         </div>
                       </div>
-                      <div className="text-amber-400 font-black text-lg font-mono">
+                      <div className="text-amber-400 font-black text-lg font-mono shrink-0">
                         ₪{item.price}
                       </div>
                     </button>
                   );
-                })
-              )}
-            </div>
+                })}
+              </div>
+            )}
+
+            {categories.length === 0 && (
+              <div className="text-center py-10 text-stone-400 bg-stone-900 rounded-2xl border border-stone-800">
+                התפריט מתעדכן כרגע... ☕
+              </div>
+            )}
           </div>
         )}
 
@@ -456,20 +513,24 @@ export default function Lobby({
                 {upcomingDays.map((d) => (
                   <button
                     key={d.iso}
+                    disabled={!d.isDayOpen}
                     onClick={() => {
                       setSelectedDate(d.iso);
                       setSelectedTime("");
                     }}
-                    className={`p-2.5 rounded-xl border text-center transition cursor-pointer ${
-                      selectedDate === d.iso
-                        ? "bg-amber-500 text-stone-950 border-amber-400 font-black"
+                    className={`p-2.5 rounded-xl border text-center transition ${
+                      !d.isDayOpen
+                        ? "bg-stone-950/40 border-stone-900 text-stone-600 opacity-50 cursor-not-allowed"
+                        : selectedDate === d.iso
+                        ? "bg-amber-500 text-stone-950 border-amber-400 font-black cursor-pointer"
                         : d.isToday
-                        ? "bg-stone-800 border-amber-500/70 text-white font-bold"
-                        : "bg-stone-950 border-stone-800 text-stone-300"
+                        ? "bg-stone-800 border-amber-500/70 text-white font-bold cursor-pointer"
+                        : "bg-stone-950 border-stone-800 text-stone-300 cursor-pointer"
                     }`}
                   >
                     <div className="text-xs">{d.isToday ? "היום" : d.dayName}</div>
                     <div className="text-sm mt-0.5">{d.dayNum}</div>
+                    {!d.isDayOpen && <div className="text-[10px] text-red-400">סגור</div>}
                   </button>
                 ))}
               </div>
@@ -477,22 +538,27 @@ export default function Lobby({
 
             <div>
               <h3 className="font-bold text-amber-400 mb-3">⏰ בחר שעת איסוף:</h3>
-              <div className="grid grid-cols-3 sm:grid-cols-5 gap-2">
-                {generateTimeSlots().map((slot) => (
-                  <button
-                    key={slot.time}
-                    onClick={() => setSelectedTime(slot.time)}
-                    className={`py-2.5 px-2 rounded-xl border text-center font-mono transition cursor-pointer ${
-                      selectedTime === slot.time
-                        ? "bg-emerald-500 text-stone-950 border-emerald-400 font-black"
-                        : "bg-stone-950 hover:border-amber-500 border-stone-800 text-white"
-                    }`}
-                  >
-                    <div className="text-base font-bold">{slot.time}</div>
-                    <div className="text-[10px] opacity-75">{slot.available} פנויים</div>
-                  </button>
-                ))}
-              </div>
+              {timeSlots.length === 0 ? (
+                <div className="text-sm text-stone-400 bg-stone-950 p-4 rounded-xl border border-stone-800 text-center">
+                  אין שעות פעילות זמינות ביום זה. בחר יום אחר למעלה.
+                </div>
+              ) : (
+                <div className="grid grid-cols-3 sm:grid-cols-5 gap-2">
+                  {timeSlots.map((time) => (
+                    <button
+                      key={time}
+                      onClick={() => setSelectedTime(time)}
+                      className={`py-2.5 px-2 rounded-xl border text-center font-mono transition cursor-pointer ${
+                        selectedTime === time
+                          ? "bg-emerald-500 text-stone-950 border-emerald-400 font-black"
+                          : "bg-stone-950 hover:border-amber-500 border-stone-800 text-white"
+                      }`}
+                    >
+                      <div className="text-base font-bold">{time}</div>
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
 
             <div className="flex justify-between pt-4 border-t border-stone-800">
@@ -527,12 +593,18 @@ export default function Lobby({
                 <strong className="text-amber-400 font-mono">{selectedTime}</strong>
               </div>
               {cart.map((item, idx) => (
-                <div key={idx} className="flex justify-between text-sm py-1 border-b border-stone-800/70">
+                <div
+                  key={idx}
+                  className="flex justify-between text-sm py-1 border-b border-stone-800/70"
+                >
                   <div>
                     <span className="font-bold text-amber-400">{item.quantity}x </span>
                     <span className="text-white">{item.name}</span>
                     {item.customizations && (
                       <span className="text-xs text-stone-400 block">{item.customizations}</span>
+                    )}
+                    {item.notes && (
+                      <span className="text-xs text-amber-300/80 block">הערה: {item.notes}</span>
                     )}
                   </div>
                   <span className="font-mono text-stone-300">₪{item.price * item.quantity}</span>
@@ -615,7 +687,7 @@ export default function Lobby({
         </div>
       )}
 
-      {/* חלון התאמה אישית לפריט (סוג חלב + הערה) */}
+      {/* חלון בחירת אפשרויות לפריט (מתוך הטקסט שהוגדר באדמין) */}
       {customizingItem && (
         <div
           className="fixed inset-0 z-50 bg-black/75 flex items-center justify-center p-4"
@@ -626,31 +698,33 @@ export default function Lobby({
             onClick={(e) => e.stopPropagation()}
           >
             <h3 className="text-lg font-black text-amber-400">
-              {customizingItem.name} — התאמה אישית
+              {customizingItem.name} — בחר אפשרות
             </h3>
             <div className="grid grid-cols-2 gap-2">
-              {["חלב רגיל", "שיבולת שועל", "חלב סויה", "חלב שקדים", "דל לקטוז", "ללא חלב"].map(
-                (m) => (
+              {(customizingItem.optionsText || "")
+                .split(",")
+                .map((s) => s.trim())
+                .filter(Boolean)
+                .map((opt) => (
                   <button
-                    key={m}
+                    key={opt}
                     type="button"
-                    onClick={() => setMilkChoice(m)}
+                    onClick={() => setSelectedOption(opt)}
                     className={`py-2 px-3 rounded-xl text-xs font-bold border cursor-pointer ${
-                      milkChoice === m
+                      selectedOption === opt
                         ? "bg-amber-500 text-stone-950 border-amber-400"
                         : "bg-stone-800 text-stone-300 border-stone-700"
                     }`}
                   >
-                    {m}
+                    {opt}
                   </button>
-                )
-              )}
+                ))}
             </div>
             <input
               type="text"
               value={itemNote}
               onChange={(e) => setItemNote(e.target.value)}
-              placeholder="הערה לבריסטה (רותח / חזק / בלי קצף)..."
+              placeholder="הערה נוספת לבריסטה (לא חובה)..."
               className="w-full bg-stone-800 border border-stone-700 rounded-xl px-3 py-2 text-xs text-white"
             />
             <button
@@ -660,7 +734,7 @@ export default function Lobby({
                   name: customizingItem.name,
                   price: customizingItem.price,
                   quantity: 1,
-                  customizations: milkChoice,
+                  customizations: selectedOption,
                   notes: itemNote.trim(),
                 })
               }
