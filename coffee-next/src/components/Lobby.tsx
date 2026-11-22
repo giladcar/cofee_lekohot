@@ -16,8 +16,6 @@ import ThemeToggle from "./ThemeToggle";
 import ContactCartBtn from "./ContactCartBtn";
 import NavigateButton from "./NavigateButton";
 import QuickRebook, { CartItem } from "./QuickRebook";
-import ImLateButton from "./ImLateButton";
-import ReviewWidget from "./ReviewWidget";
 
 interface MenuItem {
   id: string;
@@ -40,6 +38,8 @@ interface SettingsData {
   isCartClosed?: boolean;
   cartPhone?: string;
   wazeLink?: string;
+  bitLink?: string;
+  payboxLink?: string;
   announcement?: string;
   categories?: MenuCategory[];
 }
@@ -58,7 +58,6 @@ interface OrderDoc {
   totalPrice: number;
   status: string;
   customStatusMessage?: string;
-  rating?: number;
 }
 
 export default function Lobby({
@@ -71,6 +70,14 @@ export default function Lobby({
   const [settings, setSettings] = useState<SettingsData>({});
   const [myOrders, setMyOrders] = useState<OrderDoc[]>([]);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [ordersTab, setOrdersTab] = useState<"active" | "past">("active");
+
+  // מודאל דירוג נפרד
+  const [ratingModalOpen, setRatingModalOpen] = useState(false);
+  const [ratingStars, setRatingStars] = useState<number>(5);
+  const [ratingComment, setRatingComment] = useState("");
+  const [ratingSending, setRatingSending] = useState(false);
+  const [ratingSentSuccess, setRatingSentSuccess] = useState(false);
 
   // תהליך הזמנה
   const [step, setStep] = useState<1 | 2 | 3>(1);
@@ -94,7 +101,7 @@ export default function Lobby({
   const [submitting, setSubmitting] = useState(false);
   const [orderSuccess, setOrderSuccess] = useState(false);
 
-  // 1. האזנה להגדרות וקטגוריות
+  // 1. האזנה להגדרות, קישורי תשלום וקטגוריות
   useEffect(() => {
     return onSnapshot(doc(db, "config", "settings"), (snap) => {
       if (snap.exists()) {
@@ -103,7 +110,7 @@ export default function Lobby({
     });
   }, []);
 
-  // 2. טעינת פרופיל שמור של הלקוח (כולל כתובת משלוח אחרונה)
+  // 2. טעינת פרופיל שמור של הלקוח
   useEffect(() => {
     return onSnapshot(doc(db, "coffee_users", userEmail), (snap) => {
       if (snap.exists()) {
@@ -121,18 +128,18 @@ export default function Lobby({
     const q = query(collection(db, "orders"), where("userEmail", "==", userEmail));
     return onSnapshot(q, (snap) => {
       const list = snap.docs.map((d) => ({ id: d.id, ...d.data() } as OrderDoc));
-      list.sort((a, b) => (b.date + (b.pickupTime || "")).localeCompare(a.date + (a.pickupTime || "")));
+      list.sort((a, b) =>
+        (b.date + (b.pickupTime || "")).localeCompare(a.date + (a.pickupTime || ""))
+      );
       setMyOrders(list);
     });
   }, [userEmail]);
 
-  const activeOrders = myOrders.filter((o) =>
-    ["pending", "preparing", "ready", "out_for_delivery", "custom"].includes(o.status)
-  );
+  const activeStatuses = ["pending", "preparing", "ready", "out_for_delivery", "custom"];
+  const activeOrders = myOrders.filter((o) => activeStatuses.includes(o.status));
+  const pastOrders = myOrders.filter((o) => !activeStatuses.includes(o.status));
+
   const hasCanceledByAdmin = myOrders.some((o) => o.status === "canceled_by_admin");
-  const unratedOrder = myOrders.find(
-    (o) => o.status === "completed" && typeof o.rating !== "number"
-  );
   const lastCompletedOrder = myOrders.find((o) => o.status !== "canceled_by_admin");
 
   const categories = settings.categories || [];
@@ -247,6 +254,7 @@ export default function Lobby({
       setCart([]);
       setStep(1);
       setOrderSuccess(true);
+      setOrdersTab("active");
       setSidebarOpen(true);
     } finally {
       setSubmitting(false);
@@ -256,6 +264,30 @@ export default function Lobby({
   const handleCancelMyOrder = async (orderId: string) => {
     if (!confirm("לבטל את ההזמנה?")) return;
     await updateDoc(doc(db, "orders", orderId), { status: "canceled" });
+  };
+
+  // שליחת דירוג נפרד (לא מתוך ההזמנה)
+  const handleSendReview = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setRatingSending(true);
+    try {
+      await addDoc(collection(db, "reviews"), {
+        userEmail,
+        firstName: firstName.trim() || userEmail.split("@")[0],
+        lastName: lastName.trim(),
+        rating: ratingStars,
+        comment: ratingComment.trim(),
+        createdAt: new Date().toISOString(),
+      });
+      setRatingSentSuccess(true);
+      setRatingComment("");
+      setTimeout(() => {
+        setRatingModalOpen(false);
+        setRatingSentSuccess(false);
+      }, 1500);
+    } finally {
+      setRatingSending(false);
+    }
   };
 
   const renderOrderStatusBadge = (ord: OrderDoc) => {
@@ -286,6 +318,8 @@ export default function Lobby({
   const canProceedToStep3 =
     orderType === "pickup" || deliveryAddress.trim().length > 0;
 
+  const displayedOrdersList = ordersTab === "active" ? activeOrders : pastOrders;
+
   return (
     <div className="min-h-screen pb-28">
       {/* הודעה רצה בראש האתר */}
@@ -305,13 +339,22 @@ export default function Lobby({
 
           <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
             <button
-              onClick={() => setSidebarOpen(true)}
+              onClick={() => {
+                setOrdersTab("active");
+                setSidebarOpen(true);
+              }}
               className="relative px-3 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-stone-950 text-xs sm:text-sm font-black transition cursor-pointer"
             >
               🧾 ההזמנות שלי ({activeOrders.length})
               {hasCanceledByAdmin && (
                 <span className="absolute -top-1 -right-1 w-3 h-3 rounded-full bg-red-600 animate-ping" />
               )}
+            </button>
+            <button
+              onClick={() => setRatingModalOpen(true)}
+              className="px-3 py-2 rounded-xl bg-stone-800 hover:bg-amber-500/20 text-amber-400 border border-amber-500/40 text-xs sm:text-sm font-bold transition cursor-pointer"
+            >
+              ⭐ דרג אותנו
             </button>
             <ContactCartBtn phone={settings.cartPhone} />
             <NavigateButton wazeLink={settings.wazeLink} />
@@ -335,7 +378,10 @@ export default function Lobby({
               return (
                 <div
                   key={ord.id}
-                  onClick={() => setSidebarOpen(true)}
+                  onClick={() => {
+                    setOrdersTab("active");
+                    setSidebarOpen(true);
+                  }}
                   className={`rounded-2xl p-4 border flex items-center justify-between gap-3 cursor-pointer transition ${
                     isHighlighted
                       ? "bg-emerald-950/60 border-emerald-500 text-emerald-100 shadow-lg"
@@ -357,22 +403,6 @@ export default function Lobby({
                 </div>
               );
             })}
-          </div>
-        )}
-
-        {/* באנר תזכורת דירוג */}
-        {unratedOrder && (
-          <div className="bg-stone-900 border border-amber-500 rounded-2xl p-4 mb-5 flex items-center justify-between gap-3">
-            <div className="text-sm">
-              <span className="font-bold text-amber-400">⭐ נהנית מהקפה?</span>{" "}
-              <span className="text-stone-300">נשמח לדירוג קצר על ההזמנה האחרונה שלך!</span>
-            </div>
-            <button
-              onClick={() => setSidebarOpen(true)}
-              className="px-4 py-2 rounded-xl bg-amber-500 text-stone-950 font-black text-xs cursor-pointer shrink-0"
-            >
-              דרג עכשיו
-            </button>
           </div>
         )}
 
@@ -517,7 +547,7 @@ export default function Lobby({
           </div>
         )}
 
-        {/* שלב 2: בחירה בין לקחת במקום למשלוח (+ כתובת) בלבד, ללא שעות */}
+        {/* שלב 2: בחירה בין לקחת במקום למשלוח (+ כתובת) */}
         {step === 2 && (
           <div className="space-y-6 bg-stone-900 border border-stone-800 rounded-3xl p-5">
             <div>
@@ -586,7 +616,7 @@ export default function Lobby({
           </div>
         )}
 
-        {/* שלב 3: פרטים ואישור */}
+        {/* שלב 3: פרטים, קישורי Bit/PayBox ואישור */}
         {step === 3 && (
           <form
             onSubmit={handleSubmitOrder}
@@ -626,6 +656,35 @@ export default function Lobby({
                 <span className="text-amber-400">₪{totalPrice}</span>
               </div>
             </div>
+
+            {/* כפתורי תשלום ב-Bit / PayBox אם הוגדרו באדמין */}
+            {(settings.bitLink || settings.payboxLink) && (
+              <div className="bg-stone-950/80 border border-stone-800 rounded-2xl p-3.5 space-y-2">
+                <div className="text-xs font-bold text-stone-300">💳 תשלום מהיר באפליקציה:</div>
+                <div className="flex flex-wrap gap-2">
+                  {settings.bitLink && (
+                    <a
+                      href={settings.bitLink}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex-1 text-center py-2.5 px-3 rounded-xl bg-cyan-600 hover:bg-cyan-500 text-white font-black text-xs transition"
+                    >
+                      תשלום ב-Bit 📲
+                    </a>
+                  )}
+                  {settings.payboxLink && (
+                    <a
+                      href={settings.payboxLink}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex-1 text-center py-2.5 px-3 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-black text-xs transition"
+                    >
+                      תשלום ב-PayBox 💳
+                    </a>
+                  )}
+                </div>
+              </div>
+            )}
 
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               <input
@@ -757,7 +816,73 @@ export default function Lobby({
         </div>
       )}
 
-      {/* סרגל צד: ההזמנות שלי */}
+      {/* חלונית דירוג נפרדת (⭐ דרג אותנו) */}
+      {ratingModalOpen && (
+        <div
+          className="fixed inset-0 z-50 bg-black/75 flex items-center justify-center p-4"
+          onClick={() => setRatingModalOpen(false)}
+        >
+          <div
+            className="bg-stone-900 border border-amber-500/50 rounded-3xl p-6 max-w-sm w-full space-y-4 shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between">
+              <h3 className="text-lg font-black text-amber-400">⭐ דרג את עגלת הקפה</h3>
+              <button
+                onClick={() => setRatingModalOpen(false)}
+                className="px-2.5 py-1 rounded-lg bg-stone-800 text-stone-300 text-xs cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+
+            {ratingSentSuccess ? (
+              <div className="bg-emerald-950/70 border border-emerald-500 text-emerald-200 rounded-2xl p-4 text-center text-sm font-bold">
+                🙏 תודה רבה על הדירוג! שמחים שנהנית.
+              </div>
+            ) : (
+              <form onSubmit={handleSendReview} className="space-y-4">
+                <p className="text-xs text-stone-400">
+                  איך הייתה החוויה, הקפה והשירות שלנו? נשמח לשמוע!
+                </p>
+
+                <div className="flex justify-center gap-2 text-3xl">
+                  {[1, 2, 3, 4, 5].map((star) => (
+                    <button
+                      key={star}
+                      type="button"
+                      onClick={() => setRatingStars(star)}
+                      className={`transition transform hover:scale-110 cursor-pointer ${
+                        star <= ratingStars ? "text-amber-400" : "text-stone-600"
+                      }`}
+                    >
+                      ★
+                    </button>
+                  ))}
+                </div>
+
+                <textarea
+                  rows={3}
+                  value={ratingComment}
+                  onChange={(e) => setRatingComment(e.target.value)}
+                  placeholder="כתוב כמה מילים (לא חובה)..."
+                  className="w-full bg-stone-800 border border-stone-700 rounded-xl p-3 text-xs text-white focus:outline-none focus:border-amber-500"
+                />
+
+                <button
+                  type="submit"
+                  disabled={ratingSending}
+                  className="w-full py-3 rounded-xl bg-amber-500 hover:bg-amber-400 text-stone-950 font-black text-sm cursor-pointer"
+                >
+                  {ratingSending ? "שולח דירוג..." : "שלח דירוג ⭐"}
+                </button>
+              </form>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* סרגל צד: ההזמנות שלי (הזמנות פעילות + הזמנות עבר, ללא דירוג בתוכן) */}
       {sidebarOpen && (
         <div
           className="fixed inset-0 z-50 bg-black/75 flex justify-end"
@@ -777,7 +902,31 @@ export default function Lobby({
               </button>
             </div>
 
-            {orderSuccess && (
+            {/* לשוניות: הזמנות פעילות / הזמנות עבר */}
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                onClick={() => setOrdersTab("active")}
+                className={`py-2 px-3 rounded-xl text-xs font-black border transition cursor-pointer ${
+                  ordersTab === "active"
+                    ? "bg-amber-500 text-stone-950 border-amber-400"
+                    : "bg-stone-950 text-stone-400 border-stone-800"
+                }`}
+              >
+                🔥 פעילות ({activeOrders.length})
+              </button>
+              <button
+                onClick={() => setOrdersTab("past")}
+                className={`py-2 px-3 rounded-xl text-xs font-black border transition cursor-pointer ${
+                  ordersTab === "past"
+                    ? "bg-amber-500 text-stone-950 border-amber-400"
+                    : "bg-stone-950 text-stone-400 border-stone-800"
+                }`}
+              >
+                📜 הזמנות עבר ({pastOrders.length})
+              </button>
+            </div>
+
+            {orderSuccess && ordersTab === "active" && (
               <div className="bg-emerald-950/70 border border-emerald-600 rounded-2xl p-3 text-xs text-emerald-200 font-bold text-center">
                 🎉 ההזמנה התקבלה! תקבל כאן עדכון חי כשהיא בהכנה, מוכנה או בדרך אליך.
               </div>
@@ -811,17 +960,15 @@ export default function Lobby({
               </div>
             )}
 
-            {myOrders.length === 0 ? (
-              <p className="text-center text-stone-400 text-sm py-10">עדיין לא ביצעת הזמנות ☕</p>
+            {displayedOrdersList.length === 0 ? (
+              <p className="text-center text-stone-400 text-sm py-10">
+                {ordersTab === "active"
+                  ? "אין לך הזמנות פעילות כרגע ☕"
+                  : "אין הזמנות עבר עדיין 📜"}
+              </p>
             ) : (
-              myOrders.map((ord) => {
-                const isActive = [
-                  "pending",
-                  "preparing",
-                  "ready",
-                  "out_for_delivery",
-                  "custom",
-                ].includes(ord.status);
+              displayedOrdersList.map((ord) => {
+                const isActive = activeStatuses.includes(ord.status);
                 const isReadyOrDelivery = ["ready", "out_for_delivery", "custom"].includes(
                   ord.status
                 );
@@ -866,26 +1013,53 @@ export default function Lobby({
 
                     <div className="text-xs font-bold text-amber-400">סה״כ: ₪{ord.totalPrice}</div>
 
-                    {isActive && (
-                      <div className="space-y-2 pt-1">
-                        <ImLateButton
-                          orderId={ord.id}
-                          firstName={ord.firstName}
-                          pickupTime={ord.pickupTime}
-                        />
-                        {ord.status === "pending" && (
-                          <button
-                            onClick={() => handleCancelMyOrder(ord.id)}
-                            className="w-full py-1.5 rounded-xl bg-red-950/60 hover:bg-red-900 text-red-300 text-xs font-bold cursor-pointer"
+                    {/* כפתורי תשלום מהירים אם הוגדרו באדמין */}
+                    {isActive && (settings.bitLink || settings.payboxLink) && (
+                      <div className="flex gap-2 pt-1">
+                        {settings.bitLink && (
+                          <a
+                            href={settings.bitLink}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="flex-1 text-center py-1.5 rounded-xl bg-cyan-600/90 hover:bg-cyan-500 text-white text-xs font-bold"
                           >
-                            ביטול הזמנה
-                          </button>
+                            שלם ב-Bit
+                          </a>
+                        )}
+                        {settings.payboxLink && (
+                          <a
+                            href={settings.payboxLink}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="flex-1 text-center py-1.5 rounded-xl bg-blue-600/90 hover:bg-blue-500 text-white text-xs font-bold"
+                          >
+                            שלם ב-PayBox
+                          </a>
                         )}
                       </div>
                     )}
 
-                    {ord.status === "completed" && typeof ord.rating !== "number" && (
-                      <ReviewWidget orderId={ord.id} />
+                    {/* בהזמנות עבר: כפתור הזמן שוב בלחיצה */}
+                    {!isActive && (
+                      <button
+                        onClick={() => {
+                          setCart(ord.items || []);
+                          setSidebarOpen(false);
+                          setStep(2);
+                        }}
+                        className="w-full py-2 rounded-xl bg-stone-800 hover:bg-amber-500/20 text-amber-400 border border-stone-700 text-xs font-bold cursor-pointer"
+                      >
+                        🔄 הזמן שוב פריטים אלו
+                      </button>
+                    )}
+
+                    {ord.status === "pending" && (
+                      <button
+                        onClick={() => handleCancelMyOrder(ord.id)}
+                        className="w-full py-1.5 rounded-xl bg-red-950/60 hover:bg-red-900 text-red-300 text-xs font-bold cursor-pointer"
+                      >
+                        ביטול הזמנה
+                      </button>
                     )}
                   </div>
                 );
