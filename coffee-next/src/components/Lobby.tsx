@@ -148,9 +148,18 @@ export default function Lobby({
       if (Notification.permission !== "granted") return;
 
       if ("serviceWorker" in navigator) {
-        const reg = await navigator.serviceWorker.getRegistration();
+        let reg = await navigator.serviceWorker.getRegistration();
+        if (!reg) {
+          reg = await navigator.serviceWorker.register("/sw.js");
+        }
+        await navigator.serviceWorker.ready;
         if (reg && reg.showNotification) {
-          await reg.showNotification(title, { body });
+          await reg.showNotification(title, {
+            body,
+            icon: "/apple-icon",
+            badge: "/icon",
+            vibrate: [200, 100, 200],
+          } as NotificationOptions);
           return;
         }
       }
@@ -166,6 +175,9 @@ export default function Lobby({
         alert("התראות הדפדפן אינן נתמכות במכשיר זה.");
         return;
       }
+      if ("serviceWorker" in navigator) {
+        await navigator.serviceWorker.register("/sw.js");
+      }
       const perm = await Notification.requestPermission();
       setNotifEnabled(perm === "granted");
       if (perm === "granted") {
@@ -173,12 +185,13 @@ export default function Lobby({
           "☕ עגלת הקפה",
           "התראות הופעלו! נעדכן אותך מיד כשההזמנה מוכנה או בדרך."
         );
+      } else {
+        alert("יש לאשר התראות בהגדרות הדפדפן עבור אתר זה.");
       }
     } catch {
       alert("לא ניתן להפעיל התראות בדפדפן זה.");
     }
   };
-
   const renderOrderStatusBadge = (ord: OrderDoc) => {
     if (ord.status === "custom" && ord.customStatusMessage) {
       return `💬 ${ord.customStatusMessage}`;
