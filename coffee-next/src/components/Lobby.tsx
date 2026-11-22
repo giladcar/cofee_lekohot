@@ -584,7 +584,7 @@ export default function Lobby({
                     const qtyInCart = getItemQtyInCart(item.id);
 
                     return (
-                      <div)}
+                      <div
                         key={item.id}
                         onClick={() => handleSelectMenuItem(item)}
                         className={`group rounded-2xl border p-3.5 flex items-center justify-between gap-3.5 transition ${
