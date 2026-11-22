@@ -241,7 +241,7 @@ export default function Lobby({
     const parent = categories.find((p) => p.id === cat.parentId);
     return parent ? `${parent.name} — ${cat.name}` : cat.name;
   };
-  TypeScript
+  
 
   const categoriesWithItems = categories;
   const displayedSections =
@@ -573,14 +573,18 @@ export default function Lobby({
                   </h2>
                   <div className="h-px flex-1 bg-stone-800" />
                 </div>
-
+{(section.items || []).length === 0 ? (
+  <div className="text-xs text-stone-500 bg-stone-900/50 border border-stone-800/70 rounded-2xl p-4 text-center">
+    אין פריטים בקטגוריה זו כרגע ☕
+  </div>
+) : (
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
                   {(section.items || []).map((item) => {
                     const out = item.inStock === false;
                     const qtyInCart = getItemQtyInCart(item.id);
 
                     return (
-                      <div
+                      <div)}ד
                         key={item.id}
                         onClick={() => handleSelectMenuItem(item)}
                         className={`group rounded-2xl border p-3.5 flex items-center justify-between gap-3.5 transition ${
