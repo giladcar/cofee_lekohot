@@ -650,6 +650,7 @@ export default function Lobby({
                     );
                   })}
                 </div>
+				)}
               </section>
             ))}
 
