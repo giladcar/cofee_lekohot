@@ -140,41 +140,54 @@ const [notifEnabled, setNotifEnabled] = useState(false);
     }
   }, []);
 
-  const requestPhoneNotifications = async () => {
-    if (typeof window === "undefined" || !("Notification" in window)) {
-      alert("הדפדפן במכשיר זה אינו תומך בהתראות קופצות.");
-      return;
-    }
-    const perm = await Notification.requestPermission();
-    setNotifEnabled(perm === "granted");
-    if (perm === "granted") {
-      new Notification("☕ עגלת הקפה", {
-        body: "התראות הופעלו! נעדכן אותך מיד כשההזמנה מוכנה או בדרך.",
-      });
+  const sendSafeNotification = async (title: string, body: string) => {
+    try {
+      if (typeof window === "undefined" || !("Notification" in window)) return;
+      if (Notification.permission !== "granted") return;
+
+      if ("serviceWorker" in navigator) {
+        const reg = await navigator.serviceWorker.getRegistration();
+        if (reg && reg.showNotification) {
+          await reg.showNotification(title, { body });
+          return;
+        }
+      }
+      new Notification(title, { body });
+    } catch {
+      // מונע קריסת דפדפן באנדרואיד אם מערכת ההתראות חסומה
     }
   };
 
-  // הקפצת התראה לטלפון בכל פעם שסטטוס הזמנה של הלקוח משתנה
+  const requestPhoneNotifications = async () => {
+    try {
+      if (typeof window === "undefined" || !("Notification" in window)) {
+        alert("התראות הדפדפן אינן נתמכות במכשיר זה.");
+        return;
+      }
+      const perm = await Notification.requestPermission();
+      setNotifEnabled(perm === "granted");
+      if (perm === "granted") {
+        await sendSafeNotification(
+          "☕ עגלת הקפה",
+          "התראות הופעלו! נעדכן אותך מיד כשההזמנה מוכנה או בדרך."
+        );
+      }
+    } catch {
+      alert("לא ניתן להפעיל התראות בדפדפן זה.");
+    }
+  };
+
   useEffect(() => {
     myOrders.forEach((ord) => {
       const prev = prevStatusesRef.current[ord.id];
       const currentKey = `${ord.status}:${ord.customStatusMessage || ""}`;
       if (prev && prev !== currentKey) {
         const msg = renderOrderStatusBadge(ord);
-        if (typeof window !== "undefined" && "Notification" in window && Notification.permission === "granted") {
-          new Notification("☕ עדכון בהזמנה שלך!", { body: msg });
-        }
+        sendSafeNotification("☕ עדכון בהזמנה שלך!", msg);
       }
       prevStatusesRef.current[ord.id] = currentKey;
     });
   }, [myOrders]);
-  const activeStatuses = ["pending", "preparing", "ready", "out_for_delivery", "custom"];
-  const activeOrders = myOrders.filter((o) => activeStatuses.includes(o.status));
-  const pastOrders = myOrders.filter((o) => !activeStatuses.includes(o.status));
-  const hasCanceledByAdmin = myOrders.some((o) => o.status === "canceled_by_admin");
-  const lastCompletedOrder = myOrders.find((o) => o.status !== "canceled_by_admin");
-
-  const categories = settings.categories || [];
   // קטגוריות שמכילות פריטים או תתי-קטגוריות לתצוגת תפריט אמיתי
   const categoriesWithItems = categories.filter((c) => (c.items || []).length > 0);
   const displayedSections =
