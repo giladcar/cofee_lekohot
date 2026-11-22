@@ -42,8 +42,8 @@ interface SettingsData {
   payboxLink?: string;
   announcement?: string;
   showPublicRating?: boolean;
-publicRatingAverage?: string;
-publicRatingCount?: number;
+  publicRatingAverage?: string;
+  publicRatingCount?: number;
   categories?: MenuCategory[];
 }
 
@@ -393,13 +393,28 @@ export default function Lobby({
 
   return (
     <div className="min-h-screen pb-28 bg-stone-950 text-stone-100">
-      {/* הודעה רצה בראש האתר */}
+    {/* הודעה רצה בראש האתר */}
       {settings.announcement && (
         <div className="bg-amber-500 text-stone-950 text-xs sm:text-sm font-black py-2 px-4 text-center">
           📢 {settings.announcement}
         </div>
       )}
 
+      {/* באנר דירוג לקוחות מפורסם */}
+      {settings.showPublicRating && (
+        <div
+          onClick={() => setRatingModalOpen(true)}
+          className="bg-stone-900 border-b border-amber-500/40 py-2 px-4 text-center text-xs sm:text-sm cursor-pointer hover:bg-stone-800 transition"
+        >
+          <span className="text-amber-400 font-black">
+            ★ {settings.publicRatingAverage || "5.0"}
+          </span>{" "}
+          <span className="text-stone-200">
+            דירוג הלקוחות שלנו ({settings.publicRatingCount || 1} ביקורות) •{" "}
+          </span>
+          <span className="text-amber-400 underline font-bold">דרג גם אתה</span>
+        </div>
+      )}
       {/* סרגל עליון */}
       <header className="sticky top-0 z-30 bg-stone-950/90 backdrop-blur border-b border-stone-800 px-4 py-3">
         <div className="max-w-4xl mx-auto flex flex-wrap items-center justify-between gap-2">
