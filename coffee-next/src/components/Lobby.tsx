@@ -36,15 +36,8 @@ interface MenuCategory {
   items?: MenuItem[];
 }
 
-interface DayHours {
-  isOpen: boolean;
-  open: string;
-  close: string;
-}
-
 interface SettingsData {
   isCartClosed?: boolean;
-  weeklyHours?: Record<string, DayHours>;
   cartPhone?: string;
   wazeLink?: string;
   announcement?: string;
@@ -89,9 +82,8 @@ export default function Lobby({
   const [selectedOption, setSelectedOption] = useState("");
   const [itemNote, setItemNote] = useState("");
 
-  // שעה להיום בלבד + סוג קבלה (איסוף או משלוח)
+  // אופן קבלה (איסוף או משלוח + כתובת)
   const todayStr = new Date().toISOString().split("T")[0];
-  const [selectedTime, setSelectedTime] = useState<string>("");
   const [orderType, setOrderType] = useState<"pickup" | "delivery">("pickup");
   const [deliveryAddress, setDeliveryAddress] = useState<string>("");
 
@@ -102,7 +94,7 @@ export default function Lobby({
   const [submitting, setSubmitting] = useState(false);
   const [orderSuccess, setOrderSuccess] = useState(false);
 
-  // 1. האזנה להגדרות, שעות פעילות וקטגוריות
+  // 1. האזנה להגדרות וקטגוריות
   useEffect(() => {
     return onSnapshot(doc(db, "config", "settings"), (snap) => {
       if (snap.exists()) {
@@ -129,7 +121,7 @@ export default function Lobby({
     const q = query(collection(db, "orders"), where("userEmail", "==", userEmail));
     return onSnapshot(q, (snap) => {
       const list = snap.docs.map((d) => ({ id: d.id, ...d.data() } as OrderDoc));
-      list.sort((a, b) => (b.date + b.pickupTime).localeCompare(a.date + a.pickupTime));
+      list.sort((a, b) => (b.date + (b.pickupTime || "")).localeCompare(a.date + (a.pickupTime || "")));
       setMyOrders(list);
     });
   }, [userEmail]);
@@ -213,41 +205,16 @@ export default function Lobby({
   const totalPrice = cart.reduce((sum, item) => sum + item.price * item.quantity, 0);
   const totalItemsCount = cart.reduce((sum, item) => sum + item.quantity, 0);
 
-  // חישוב שעות להיום בלבד לפי הגדרות הפעילות באדמין
-  const generateTodayTimeSlots = () => {
-    const now = new Date();
-    const dayKey = String(now.getDay());
-    const dayCfg = settings.weeklyHours?.[dayKey] || {
-      isOpen: true,
-      open: "07:30",
-      close: "15:00",
-    };
-
-    if (!dayCfg.isOpen) return [];
-
-    const [sh, sm] = (dayCfg.open || "07:30").split(":").map(Number);
-    const [eh, em] = (dayCfg.close || "15:00").split(":").map(Number);
-    let cur = sh * 60 + sm;
-    const endTotal = eh * 60 + em;
-    const nowMinutes = now.getHours() * 60 + now.getMinutes();
-
-    const slots: string[] = [];
-    while (cur < endTotal) {
-      if (cur >= nowMinutes + 5) {
-        const hh = String(Math.floor(cur / 60)).padStart(2, "0");
-        const mm = String(cur % 60).padStart(2, "0");
-        slots.push(`${hh}:${mm}`);
-      }
-      cur += 10;
-    }
-    return slots;
-  };
-
   const handleSubmitOrder = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (cart.length === 0 || !selectedTime) return;
+    if (cart.length === 0) return;
     if (orderType === "delivery" && !deliveryAddress.trim()) return;
     setSubmitting(true);
+
+    const nowTime = new Date().toLocaleTimeString("he-IL", {
+      hour: "2-digit",
+      minute: "2-digit",
+    });
 
     try {
       await setDoc(
@@ -268,7 +235,7 @@ export default function Lobby({
         lastName: lastName.trim(),
         phone: phone.trim(),
         date: todayStr,
-        pickupTime: selectedTime,
+        pickupTime: nowTime,
         orderType,
         deliveryAddress: orderType === "delivery" ? deliveryAddress.trim() : "",
         items: cart,
@@ -278,7 +245,6 @@ export default function Lobby({
       });
 
       setCart([]);
-      setSelectedTime("");
       setStep(1);
       setOrderSuccess(true);
       setSidebarOpen(true);
@@ -292,7 +258,6 @@ export default function Lobby({
     await updateDoc(doc(db, "orders", orderId), { status: "canceled" });
   };
 
-  // תצוגת סטטוס ברורה ללקוח (מוכן / בהכנה / בדרך למשלוח / הודעת אדמין)
   const renderOrderStatusBadge = (ord: OrderDoc) => {
     if (ord.status === "custom" && ord.customStatusMessage) {
       return `💬 ${ord.customStatusMessage}`;
@@ -318,9 +283,8 @@ export default function Lobby({
     return "בוטלה";
   };
 
-  const timeSlots = generateTodayTimeSlots();
   const canProceedToStep3 =
-    Boolean(selectedTime) && (orderType === "pickup" || deliveryAddress.trim().length > 0);
+    orderType === "pickup" || deliveryAddress.trim().length > 0;
 
   return (
     <div className="min-h-screen pb-28">
@@ -363,7 +327,7 @@ export default function Lobby({
       </header>
 
       <main className="max-w-4xl mx-auto p-4">
-        {/* באנר התראה חי בראש הדף על הזמנה פעילה (מוכן / בדרך / הודעה מהמקום) */}
+        {/* באנר התראה חי בראש הדף על הזמנה פעילה */}
         {activeOrders.length > 0 && (
           <div className="space-y-2 mb-5">
             {activeOrders.map((ord) => {
@@ -380,8 +344,8 @@ export default function Lobby({
                 >
                   <div>
                     <div className="text-xs text-stone-400">
-                      הזמנה להיום לשעה <strong className="font-mono text-amber-400">{ord.pickupTime}</strong>{" "}
-                      ({ord.orderType === "delivery" ? "משלוח" : "איסוף מהמקום"})
+                      הזמנה ({ord.orderType === "delivery" ? "משלוח" : "לקחת במקום"})
+                      {ord.pickupTime ? ` • ${ord.pickupTime}` : ""}
                     </div>
                     <div className="text-base sm:text-lg font-black mt-0.5">
                       {renderOrderStatusBadge(ord)}
@@ -436,7 +400,7 @@ export default function Lobby({
         <div className="grid grid-cols-3 gap-2 mb-6">
           {[
             { num: 1, label: "1. בחירת תפריט" },
-            { num: 2, label: "2. שעה ואופן קבלה" },
+            { num: 2, label: "2. משלוח / במקום" },
             { num: 3, label: "3. אישור הזמנה" },
           ].map((s) => (
             <button
@@ -553,41 +517,40 @@ export default function Lobby({
           </div>
         )}
 
-        {/* שלב 2: בחירת אופן קבלה (מקום / משלוח) ושעה להיום בלבד */}
+        {/* שלב 2: בחירה בין לקחת במקום למשלוח (+ כתובת) בלבד, ללא שעות */}
         {step === 2 && (
           <div className="space-y-6 bg-stone-900 border border-stone-800 rounded-3xl p-5">
-            {/* בחירה בין לקחת במקום למשלוח */}
             <div>
               <h3 className="font-bold text-amber-400 mb-3">🛍️ איך תרצה לקבל את ההזמנה?</h3>
               <div className="grid grid-cols-2 gap-3">
                 <button
                   type="button"
                   onClick={() => setOrderType("pickup")}
-                  className={`p-3.5 rounded-2xl border text-center transition cursor-pointer ${
+                  className={`p-4 rounded-2xl border text-center transition cursor-pointer ${
                     orderType === "pickup"
                       ? "bg-amber-500 text-stone-950 border-amber-400 font-black"
                       : "bg-stone-950 text-stone-300 border-stone-800 hover:border-stone-700"
                   }`}
                 >
-                  <div className="text-xl mb-1">☕</div>
-                  <div className="text-sm font-bold">לקחת במקום</div>
+                  <div className="text-2xl mb-1">☕</div>
+                  <div className="text-base font-bold">לקחת במקום</div>
                 </button>
                 <button
                   type="button"
                   onClick={() => setOrderType("delivery")}
-                  className={`p-3.5 rounded-2xl border text-center transition cursor-pointer ${
+                  className={`p-4 rounded-2xl border text-center transition cursor-pointer ${
                     orderType === "delivery"
                       ? "bg-amber-500 text-stone-950 border-amber-400 font-black"
                       : "bg-stone-950 text-stone-300 border-stone-800 hover:border-stone-700"
                   }`}
                 >
-                  <div className="text-xl mb-1">🛵</div>
-                  <div className="text-sm font-bold">משלוח</div>
+                  <div className="text-2xl mb-1">🛵</div>
+                  <div className="text-base font-bold">משלוח</div>
                 </button>
               </div>
 
               {orderType === "delivery" && (
-                <div className="mt-3">
+                <div className="mt-4">
                   <label className="block text-xs text-stone-400 mb-1.5">
                     כתובת מלאה למשלוח (רחוב, מספר בית, קומה / הערות לשליח):
                   </label>
@@ -599,39 +562,6 @@ export default function Lobby({
                     placeholder="לדוגמה: הרצל 15, קומה 2, דירה 4"
                     className="w-full bg-stone-800 border border-amber-500/60 rounded-xl px-4 py-3 text-sm text-white focus:outline-none focus:border-amber-400"
                   />
-                </div>
-              )}
-            </div>
-
-            {/* בחירת שעה להיום בלבד */}
-            <div>
-              <div className="flex items-center justify-between mb-3">
-                <h3 className="font-bold text-amber-400">⏰ בחר שעה להיום ({todayStr}):</h3>
-                <span className="text-xs bg-stone-800 text-amber-300 px-2.5 py-1 rounded-lg font-bold">
-                  היום בלבד
-                </span>
-              </div>
-
-              {timeSlots.length === 0 ? (
-                <div className="text-sm text-stone-400 bg-stone-950 p-4 rounded-xl border border-stone-800 text-center">
-                  אין שעות זמינות כרגע להיום (ייתכן שהעגלה סגורה להיום או ששעות הפעילות הסתיימו).
-                </div>
-              ) : (
-                <div className="grid grid-cols-3 sm:grid-cols-5 gap-2">
-                  {timeSlots.map((time) => (
-                    <button
-                      key={time}
-                      type="button"
-                      onClick={() => setSelectedTime(time)}
-                      className={`py-2.5 px-2 rounded-xl border text-center font-mono transition cursor-pointer ${
-                        selectedTime === time
-                          ? "bg-emerald-500 text-stone-950 border-emerald-400 font-black"
-                          : "bg-stone-950 hover:border-amber-500 border-stone-800 text-white"
-                      }`}
-                    >
-                      <div className="text-base font-bold">{time}</div>
-                    </button>
-                  ))}
                 </div>
               )}
             </div>
@@ -666,11 +596,7 @@ export default function Lobby({
 
             <div className="bg-stone-950 rounded-2xl p-4 border border-stone-800 space-y-2">
               <div className="text-xs text-stone-300 flex flex-wrap gap-2 items-center">
-                <span>
-                  להיום (<strong className="text-white">{todayStr}</strong>) בשעה{" "}
-                  <strong className="text-amber-400 font-mono">{selectedTime}</strong>
-                </span>
-                <span className="px-2 py-0.5 rounded-md bg-stone-800 text-amber-300 font-bold">
+                <span className="px-2.5 py-1 rounded-md bg-stone-800 text-amber-300 font-bold">
                   {orderType === "delivery"
                     ? `🛵 משלוח לכתובת: ${deliveryAddress}`
                     : "☕ לקחת במקום"}
@@ -734,7 +660,7 @@ export default function Lobby({
                 onClick={() => setStep(2)}
                 className="px-4 py-2.5 rounded-xl bg-stone-800 text-stone-300 text-sm font-bold cursor-pointer"
               >
-                → שנה שעה / אופן קבלה
+                → שנה אופן קבלה
               </button>
               <button
                 type="submit"
@@ -766,7 +692,7 @@ export default function Lobby({
               onClick={() => setStep(2)}
               className="px-5 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-stone-950 font-black text-sm cursor-pointer"
             >
-              בחר שעה ומשלוח / איסוף ←
+              המשך להזמנה ←
             </button>
           </div>
         </div>
@@ -910,7 +836,7 @@ export default function Lobby({
                   >
                     <div className="flex items-center justify-between gap-2">
                       <span className="font-mono font-bold text-amber-400 text-xs">
-                        {ord.date} | {ord.pickupTime}
+                        {ord.date} {ord.pickupTime ? `| ${ord.pickupTime}` : ""}
                       </span>
                       <span
                         className={`text-xs font-black px-2.5 py-1 rounded-full ${
