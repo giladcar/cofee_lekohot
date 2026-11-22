@@ -241,11 +241,15 @@ export default function Lobby({
     const parent = categories.find((p) => p.id === cat.parentId);
     return parent ? `${parent.name} — ${cat.name}` : cat.name;
   };
-  const categoriesWithItems = categories.filter((c) => (c.items || []).length > 0);
+  TypeScript
+
+  const categoriesWithItems = categories;
   const displayedSections =
     selectedCatId === "ALL"
       ? categoriesWithItems
-      : categoriesWithItems.filter((c) => c.id === selectedCatId);
+      : categoriesWithItems.filter(
+          (c) => c.id === selectedCatId || c.parentId === selectedCatId
+        );
 
   const handleSelectMenuItem = (item: MenuItem) => {
     if (item.inStock === false || settings.isCartClosed) return;
