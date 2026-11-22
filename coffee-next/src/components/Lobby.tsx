@@ -59,9 +59,12 @@ interface OrderDoc {
   phone: string;
   date: string;
   pickupTime: string;
+  orderType?: "pickup" | "delivery";
+  deliveryAddress?: string;
   items: CartItem[];
   totalPrice: number;
   status: string;
+  customStatusMessage?: string;
   rating?: number;
 }
 
@@ -86,10 +89,11 @@ export default function Lobby({
   const [selectedOption, setSelectedOption] = useState("");
   const [itemNote, setItemNote] = useState("");
 
-  // תאריך ושעה
+  // שעה להיום בלבד + סוג קבלה (איסוף או משלוח)
   const todayStr = new Date().toISOString().split("T")[0];
-  const [selectedDate, setSelectedDate] = useState<string>(todayStr);
   const [selectedTime, setSelectedTime] = useState<string>("");
+  const [orderType, setOrderType] = useState<"pickup" | "delivery">("pickup");
+  const [deliveryAddress, setDeliveryAddress] = useState<string>("");
 
   // פרטי לקוח
   const [firstName, setFirstName] = useState("");
@@ -107,7 +111,7 @@ export default function Lobby({
     });
   }, []);
 
-  // 2. טעינת פרופיל שמור של הלקוח
+  // 2. טעינת פרופיל שמור של הלקוח (כולל כתובת משלוח אחרונה)
   useEffect(() => {
     return onSnapshot(doc(db, "coffee_users", userEmail), (snap) => {
       if (snap.exists()) {
@@ -115,11 +119,12 @@ export default function Lobby({
         if (d.firstName) setFirstName(d.firstName);
         if (d.lastName) setLastName(d.lastName);
         if (d.phone) setPhone(d.phone);
+        if (d.deliveryAddress) setDeliveryAddress(d.deliveryAddress);
       }
     });
   }, [userEmail]);
 
-  // 3. הזמנות הלקוח
+  // 3. הזמנות הלקוח בזמן אמת
   useEffect(() => {
     const q = query(collection(db, "orders"), where("userEmail", "==", userEmail));
     return onSnapshot(q, (snap) => {
@@ -130,7 +135,7 @@ export default function Lobby({
   }, [userEmail]);
 
   const activeOrders = myOrders.filter((o) =>
-    ["pending", "preparing", "ready"].includes(o.status)
+    ["pending", "preparing", "ready", "out_for_delivery", "custom"].includes(o.status)
   );
   const hasCanceledByAdmin = myOrders.some((o) => o.status === "canceled_by_admin");
   const unratedOrder = myOrders.find(
@@ -146,7 +151,6 @@ export default function Lobby({
     (c) => (c.parentId || null) === (activeCatId || null)
   );
 
-  // מסלול ניווט קטגוריות
   const getBreadcrumbs = () => {
     const path: MenuCategory[] = [];
     let curr = currentCategory;
@@ -157,7 +161,6 @@ export default function Lobby({
     return path;
   };
 
-  // בחירת פריט מהתפריט
   const handleSelectMenuItem = (item: MenuItem) => {
     if (item.inStock === false) return;
     const opts = (item.optionsText || "")
@@ -210,10 +213,10 @@ export default function Lobby({
   const totalPrice = cart.reduce((sum, item) => sum + item.price * item.quantity, 0);
   const totalItemsCount = cart.reduce((sum, item) => sum + item.quantity, 0);
 
-  // חישוב שעות איסוף לפי היום בשבוע שהוגדר באדמין
-  const generateTimeSlots = () => {
-    const dateObj = new Date(selectedDate + "T00:00:00");
-    const dayKey = String(dateObj.getDay());
+  // חישוב שעות להיום בלבד לפי הגדרות הפעילות באדמין
+  const generateTodayTimeSlots = () => {
+    const now = new Date();
+    const dayKey = String(now.getDay());
     const dayCfg = settings.weeklyHours?.[dayKey] || {
       isOpen: true,
       open: "07:30",
@@ -226,13 +229,11 @@ export default function Lobby({
     const [eh, em] = (dayCfg.close || "15:00").split(":").map(Number);
     let cur = sh * 60 + sm;
     const endTotal = eh * 60 + em;
-
-    const now = new Date();
     const nowMinutes = now.getHours() * 60 + now.getMinutes();
 
     const slots: string[] = [];
     while (cur < endTotal) {
-      if (selectedDate !== todayStr || cur >= nowMinutes + 5) {
+      if (cur >= nowMinutes + 5) {
         const hh = String(Math.floor(cur / 60)).padStart(2, "0");
         const mm = String(cur % 60).padStart(2, "0");
         slots.push(`${hh}:${mm}`);
@@ -242,10 +243,10 @@ export default function Lobby({
     return slots;
   };
 
-  // שליחת הזמנה
   const handleSubmitOrder = async (e: React.FormEvent) => {
     e.preventDefault();
     if (cart.length === 0 || !selectedTime) return;
+    if (orderType === "delivery" && !deliveryAddress.trim()) return;
     setSubmitting(true);
 
     try {
@@ -255,6 +256,7 @@ export default function Lobby({
           firstName: firstName.trim(),
           lastName: lastName.trim(),
           phone: phone.trim(),
+          ...(orderType === "delivery" ? { deliveryAddress: deliveryAddress.trim() } : {}),
           updatedAt: new Date().toISOString(),
         },
         { merge: true }
@@ -265,8 +267,10 @@ export default function Lobby({
         firstName: firstName.trim(),
         lastName: lastName.trim(),
         phone: phone.trim(),
-        date: selectedDate,
+        date: todayStr,
         pickupTime: selectedTime,
+        orderType,
+        deliveryAddress: orderType === "delivery" ? deliveryAddress.trim() : "",
         items: cart,
         totalPrice,
         status: "pending",
@@ -288,20 +292,35 @@ export default function Lobby({
     await updateDoc(doc(db, "orders", orderId), { status: "canceled" });
   };
 
-  // 7 ימים קרובים לבחירה (תוך התחשבות בימים סגורים באדמין)
-  const upcomingDays = Array.from({ length: 7 }, (_, i) => {
-    const d = new Date();
-    d.setDate(d.getDate() + i);
-    const iso = d.toISOString().split("T")[0];
-    const dayKey = String(d.getDay());
-    const dayCfg = settings.weeklyHours?.[dayKey];
-    const isDayOpen = dayCfg ? dayCfg.isOpen : true;
-    const dayName = d.toLocaleDateString("he-IL", { weekday: "short" });
-    const dayNum = d.toLocaleDateString("he-IL", { day: "2-digit", month: "2-digit" });
-    return { iso, dayName, dayNum, isToday: i === 0, isDayOpen };
-  });
+  // תצוגת סטטוס ברורה ללקוח (מוכן / בהכנה / בדרך למשלוח / הודעת אדמין)
+  const renderOrderStatusBadge = (ord: OrderDoc) => {
+    if (ord.status === "custom" && ord.customStatusMessage) {
+      return `💬 ${ord.customStatusMessage}`;
+    }
+    if (ord.status === "out_for_delivery") {
+      return "🛵 המשלוח בדרך אליך!";
+    }
+    if (ord.status === "ready") {
+      return ord.orderType === "delivery" ? "🛵 המשלוח מוכן ויוצא לדרך!" : "✅ ההזמנה שלך מוכנה!";
+    }
+    if (ord.status === "preparing") {
+      return "☕ בהכנה כרגע";
+    }
+    if (ord.status === "pending") {
+      return "⏳ התקבלה — ממתינה להכנה";
+    }
+    if (ord.status === "completed") {
+      return "🤝 הושלמה";
+    }
+    if (ord.status === "canceled_by_admin") {
+      return "❌ בוטלה ע״י המקום";
+    }
+    return "בוטלה";
+  };
 
-  const timeSlots = generateTimeSlots();
+  const timeSlots = generateTodayTimeSlots();
+  const canProceedToStep3 =
+    Boolean(selectedTime) && (orderType === "pickup" || deliveryAddress.trim().length > 0);
 
   return (
     <div className="min-h-screen pb-28">
@@ -344,6 +363,39 @@ export default function Lobby({
       </header>
 
       <main className="max-w-4xl mx-auto p-4">
+        {/* באנר התראה חי בראש הדף על הזמנה פעילה (מוכן / בדרך / הודעה מהמקום) */}
+        {activeOrders.length > 0 && (
+          <div className="space-y-2 mb-5">
+            {activeOrders.map((ord) => {
+              const isHighlighted = ["ready", "out_for_delivery", "custom"].includes(ord.status);
+              return (
+                <div
+                  key={ord.id}
+                  onClick={() => setSidebarOpen(true)}
+                  className={`rounded-2xl p-4 border flex items-center justify-between gap-3 cursor-pointer transition ${
+                    isHighlighted
+                      ? "bg-emerald-950/60 border-emerald-500 text-emerald-100 shadow-lg"
+                      : "bg-stone-900 border-amber-500/50 text-stone-100"
+                  }`}
+                >
+                  <div>
+                    <div className="text-xs text-stone-400">
+                      הזמנה להיום לשעה <strong className="font-mono text-amber-400">{ord.pickupTime}</strong>{" "}
+                      ({ord.orderType === "delivery" ? "משלוח" : "איסוף מהמקום"})
+                    </div>
+                    <div className="text-base sm:text-lg font-black mt-0.5">
+                      {renderOrderStatusBadge(ord)}
+                    </div>
+                  </div>
+                  <span className="text-xs font-bold px-3 py-1.5 rounded-xl bg-stone-800/80 text-amber-300 shrink-0">
+                    פרטים ←
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
         {/* באנר תזכורת דירוג */}
         {unratedOrder && (
           <div className="bg-stone-900 border border-amber-500 rounded-2xl p-4 mb-5 flex items-center justify-between gap-3">
@@ -384,7 +436,7 @@ export default function Lobby({
         <div className="grid grid-cols-3 gap-2 mb-6">
           {[
             { num: 1, label: "1. בחירת תפריט" },
-            { num: 2, label: "2. מועד איסוף" },
+            { num: 2, label: "2. שעה ואופן קבלה" },
             { num: 3, label: "3. אישור הזמנה" },
           ].map((s) => (
             <button
@@ -392,7 +444,7 @@ export default function Lobby({
               onClick={() => {
                 if (s.num === 1) setStep(1);
                 if (s.num === 2 && cart.length > 0) setStep(2);
-                if (s.num === 3 && cart.length > 0 && selectedTime) setStep(3);
+                if (s.num === 3 && cart.length > 0 && canProceedToStep3) setStep(3);
               }}
               className={`py-2.5 px-2 rounded-xl text-xs sm:text-sm font-black border transition cursor-pointer ${
                 step === s.num
@@ -408,7 +460,6 @@ export default function Lobby({
         {/* שלב 1: בחירת תפריט היררכי */}
         {step === 1 && (
           <div className="space-y-4">
-            {/* שורת ניווט בקטגוריות */}
             <div className="flex flex-wrap items-center gap-2 bg-stone-900 px-3.5 py-2.5 rounded-xl border border-stone-800 text-xs">
               <button
                 onClick={() => setActiveCatId(null)}
@@ -433,7 +484,6 @@ export default function Lobby({
               ))}
             </div>
 
-            {/* כפתורי קטגוריות / תתי-קטגוריות */}
             {visibleSubCategories.length > 0 && (
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
                 {visibleSubCategories.map((cat) => (
@@ -449,7 +499,6 @@ export default function Lobby({
               </div>
             )}
 
-            {/* פריטים להזמנה בתוך הקטגוריה הנוכחית */}
             {currentCategory && (
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2">
                 {(currentCategory.items || []).map((item) => {
@@ -504,49 +553,75 @@ export default function Lobby({
           </div>
         )}
 
-        {/* שלב 2: בחירת יום ושעה */}
+        {/* שלב 2: בחירת אופן קבלה (מקום / משלוח) ושעה להיום בלבד */}
         {step === 2 && (
           <div className="space-y-6 bg-stone-900 border border-stone-800 rounded-3xl p-5">
+            {/* בחירה בין לקחת במקום למשלוח */}
             <div>
-              <h3 className="font-bold text-amber-400 mb-3">📅 בחר יום איסוף:</h3>
-              <div className="grid grid-cols-4 sm:grid-cols-7 gap-2">
-                {upcomingDays.map((d) => (
-                  <button
-                    key={d.iso}
-                    disabled={!d.isDayOpen}
-                    onClick={() => {
-                      setSelectedDate(d.iso);
-                      setSelectedTime("");
-                    }}
-                    className={`p-2.5 rounded-xl border text-center transition ${
-                      !d.isDayOpen
-                        ? "bg-stone-950/40 border-stone-900 text-stone-600 opacity-50 cursor-not-allowed"
-                        : selectedDate === d.iso
-                        ? "bg-amber-500 text-stone-950 border-amber-400 font-black cursor-pointer"
-                        : d.isToday
-                        ? "bg-stone-800 border-amber-500/70 text-white font-bold cursor-pointer"
-                        : "bg-stone-950 border-stone-800 text-stone-300 cursor-pointer"
-                    }`}
-                  >
-                    <div className="text-xs">{d.isToday ? "היום" : d.dayName}</div>
-                    <div className="text-sm mt-0.5">{d.dayNum}</div>
-                    {!d.isDayOpen && <div className="text-[10px] text-red-400">סגור</div>}
-                  </button>
-                ))}
+              <h3 className="font-bold text-amber-400 mb-3">🛍️ איך תרצה לקבל את ההזמנה?</h3>
+              <div className="grid grid-cols-2 gap-3">
+                <button
+                  type="button"
+                  onClick={() => setOrderType("pickup")}
+                  className={`p-3.5 rounded-2xl border text-center transition cursor-pointer ${
+                    orderType === "pickup"
+                      ? "bg-amber-500 text-stone-950 border-amber-400 font-black"
+                      : "bg-stone-950 text-stone-300 border-stone-800 hover:border-stone-700"
+                  }`}
+                >
+                  <div className="text-xl mb-1">☕</div>
+                  <div className="text-sm font-bold">לקחת במקום</div>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setOrderType("delivery")}
+                  className={`p-3.5 rounded-2xl border text-center transition cursor-pointer ${
+                    orderType === "delivery"
+                      ? "bg-amber-500 text-stone-950 border-amber-400 font-black"
+                      : "bg-stone-950 text-stone-300 border-stone-800 hover:border-stone-700"
+                  }`}
+                >
+                  <div className="text-xl mb-1">🛵</div>
+                  <div className="text-sm font-bold">משלוח</div>
+                </button>
               </div>
+
+              {orderType === "delivery" && (
+                <div className="mt-3">
+                  <label className="block text-xs text-stone-400 mb-1.5">
+                    כתובת מלאה למשלוח (רחוב, מספר בית, קומה / הערות לשליח):
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={deliveryAddress}
+                    onChange={(e) => setDeliveryAddress(e.target.value)}
+                    placeholder="לדוגמה: הרצל 15, קומה 2, דירה 4"
+                    className="w-full bg-stone-800 border border-amber-500/60 rounded-xl px-4 py-3 text-sm text-white focus:outline-none focus:border-amber-400"
+                  />
+                </div>
+              )}
             </div>
 
+            {/* בחירת שעה להיום בלבד */}
             <div>
-              <h3 className="font-bold text-amber-400 mb-3">⏰ בחר שעת איסוף:</h3>
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="font-bold text-amber-400">⏰ בחר שעה להיום ({todayStr}):</h3>
+                <span className="text-xs bg-stone-800 text-amber-300 px-2.5 py-1 rounded-lg font-bold">
+                  היום בלבד
+                </span>
+              </div>
+
               {timeSlots.length === 0 ? (
                 <div className="text-sm text-stone-400 bg-stone-950 p-4 rounded-xl border border-stone-800 text-center">
-                  אין שעות פעילות זמינות ביום זה. בחר יום אחר למעלה.
+                  אין שעות זמינות כרגע להיום (ייתכן שהעגלה סגורה להיום או ששעות הפעילות הסתיימו).
                 </div>
               ) : (
                 <div className="grid grid-cols-3 sm:grid-cols-5 gap-2">
                   {timeSlots.map((time) => (
                     <button
                       key={time}
+                      type="button"
                       onClick={() => setSelectedTime(time)}
                       className={`py-2.5 px-2 rounded-xl border text-center font-mono transition cursor-pointer ${
                         selectedTime === time
@@ -563,13 +638,15 @@ export default function Lobby({
 
             <div className="flex justify-between pt-4 border-t border-stone-800">
               <button
+                type="button"
                 onClick={() => setStep(1)}
                 className="px-4 py-2.5 rounded-xl bg-stone-800 text-stone-300 text-sm font-bold cursor-pointer"
               >
                 → חזרה לתפריט
               </button>
               <button
-                disabled={!selectedTime}
+                type="button"
+                disabled={!canProceedToStep3}
                 onClick={() => setStep(3)}
                 className="px-6 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 disabled:opacity-40 text-stone-950 font-black text-sm cursor-pointer"
               >
@@ -588,10 +665,18 @@ export default function Lobby({
             <h3 className="font-black text-lg text-amber-400">🧾 סיכום ההזמנה שלך</h3>
 
             <div className="bg-stone-950 rounded-2xl p-4 border border-stone-800 space-y-2">
-              <div className="text-xs text-stone-400">
-                איסוף בתאריך <strong className="text-white">{selectedDate}</strong> בשעה{" "}
-                <strong className="text-amber-400 font-mono">{selectedTime}</strong>
+              <div className="text-xs text-stone-300 flex flex-wrap gap-2 items-center">
+                <span>
+                  להיום (<strong className="text-white">{todayStr}</strong>) בשעה{" "}
+                  <strong className="text-amber-400 font-mono">{selectedTime}</strong>
+                </span>
+                <span className="px-2 py-0.5 rounded-md bg-stone-800 text-amber-300 font-bold">
+                  {orderType === "delivery"
+                    ? `🛵 משלוח לכתובת: ${deliveryAddress}`
+                    : "☕ לקחת במקום"}
+                </span>
               </div>
+
               {cart.map((item, idx) => (
                 <div
                   key={idx}
@@ -611,7 +696,7 @@ export default function Lobby({
                 </div>
               ))}
               <div className="flex justify-between font-black text-base pt-2">
-                <span>סה״כ לתשלום בעגלה:</span>
+                <span>סה״כ לתשלום:</span>
                 <span className="text-amber-400">₪{totalPrice}</span>
               </div>
             </div>
@@ -649,14 +734,14 @@ export default function Lobby({
                 onClick={() => setStep(2)}
                 className="px-4 py-2.5 rounded-xl bg-stone-800 text-stone-300 text-sm font-bold cursor-pointer"
               >
-                → שנה שעה
+                → שנה שעה / אופן קבלה
               </button>
               <button
                 type="submit"
                 disabled={submitting}
                 className="px-6 py-3 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-stone-950 font-black text-sm cursor-pointer"
               >
-                {submitting ? "שולח הזמנה..." : "✅ שלח הזמנה לבריסטה"}
+                {submitting ? "שולח הזמנה..." : "✅ שלח הזמנה"}
               </button>
             </div>
           </form>
@@ -681,13 +766,13 @@ export default function Lobby({
               onClick={() => setStep(2)}
               className="px-5 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-stone-950 font-black text-sm cursor-pointer"
             >
-              בחר שעת איסוף ←
+              בחר שעה ומשלוח / איסוף ←
             </button>
           </div>
         </div>
       )}
 
-      {/* חלון בחירת אפשרויות לפריט (מתוך הטקסט שהוגדר באדמין) */}
+      {/* חלון בחירת אפשרויות לפריט */}
       {customizingItem && (
         <div
           className="fixed inset-0 z-50 bg-black/75 flex items-center justify-center p-4"
@@ -768,7 +853,7 @@ export default function Lobby({
 
             {orderSuccess && (
               <div className="bg-emerald-950/70 border border-emerald-600 rounded-2xl p-3 text-xs text-emerald-200 font-bold text-center">
-                🎉 ההזמנה התקבלה אצל הבריסטה! כאן תוכל לעקוב אחר ההכנה בזמן אמת.
+                🎉 ההזמנה התקבלה! תקבל כאן עדכון חי כשהיא בהכנה, מוכנה או בדרך אליך.
               </div>
             )}
 
@@ -804,28 +889,44 @@ export default function Lobby({
               <p className="text-center text-stone-400 text-sm py-10">עדיין לא ביצעת הזמנות ☕</p>
             ) : (
               myOrders.map((ord) => {
-                const isActive = ["pending", "preparing", "ready"].includes(ord.status);
+                const isActive = [
+                  "pending",
+                  "preparing",
+                  "ready",
+                  "out_for_delivery",
+                  "custom",
+                ].includes(ord.status);
+                const isReadyOrDelivery = ["ready", "out_for_delivery", "custom"].includes(
+                  ord.status
+                );
                 return (
                   <div
                     key={ord.id}
                     className={`rounded-2xl p-4 border space-y-2.5 ${
-                      ord.status === "ready"
+                      isReadyOrDelivery
                         ? "bg-emerald-950/30 border-emerald-500"
                         : "bg-stone-950 border-stone-800"
                     }`}
                   >
-                    <div className="flex items-center justify-between">
-                      <span className="font-mono font-bold text-amber-400">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="font-mono font-bold text-amber-400 text-xs">
                         {ord.date} | {ord.pickupTime}
                       </span>
-                      <span className="text-xs font-bold px-2.5 py-0.5 rounded-full bg-stone-800 text-white">
-                        {ord.status === "pending" && "⏳ ממתין להכנה"}
-                        {ord.status === "preparing" && "☕ בהכנה כרגע"}
-                        {ord.status === "ready" && "✅ מוכן לאיסוף בדלפק!"}
-                        {ord.status === "completed" && "🤝 נמסר"}
-                        {ord.status === "canceled_by_admin" && "❌ בוטל ע״י העגלה"}
-                        {ord.status === "canceled" && "בוטל"}
+                      <span
+                        className={`text-xs font-black px-2.5 py-1 rounded-full ${
+                          isReadyOrDelivery
+                            ? "bg-emerald-500 text-stone-950"
+                            : "bg-stone-800 text-white"
+                        }`}
+                      >
+                        {renderOrderStatusBadge(ord)}
                       </span>
+                    </div>
+
+                    <div className="text-[11px] text-stone-400">
+                      {ord.orderType === "delivery"
+                        ? `🛵 משלוח לכתובת: ${ord.deliveryAddress || "לא צוינה כתובת"}`
+                        : "☕ לקחת במקום"}
                     </div>
 
                     <div className="text-xs text-stone-300 space-y-1">
