@@ -1,6 +1,6 @@
-"use client";
+\"use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import {
   collection,
   doc,
@@ -72,6 +72,10 @@ export default function Lobby({
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [ordersTab, setOrdersTab] = useState<"active" | "past">("active");
 
+  // התראות בטלפון
+  const [notifEnabled, setNotifEnabled] = useState(false);
+  const prevStatusesRef = useRef<Record<string, string>>({});
+
   // מודאל דירוג נפרד
   const [ratingModalOpen, setRatingModalOpen] = useState(false);
   const [ratingStars, setRatingStars] = useState<number>(5);
@@ -100,6 +104,12 @@ export default function Lobby({
   const [phone, setPhone] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [orderSuccess, setOrderSuccess] = useState(false);
+
+  useEffect(() => {
+    if (typeof window !== "undefined" && "Notification" in window) {
+      setNotifEnabled(Notification.permission === "granted");
+    }
+  }, []);
 
   useEffect(() => {
     return onSnapshot(doc(db, "config", "settings"), (snap) => {
@@ -131,14 +141,6 @@ export default function Lobby({
       setMyOrders(list);
     });
   }, [userEmail]);
-const [notifEnabled, setNotifEnabled] = useState(false);
-  const prevStatusesRef = React.useRef<Record<string, string>>({});
-
-  useEffect(() => {
-    if (typeof window !== "undefined" && "Notification" in window) {
-      setNotifEnabled(Notification.permission === "granted");
-    }
-  }, []);
 
   const sendSafeNotification = async (title: string, body: string) => {
     try {
@@ -154,7 +156,7 @@ const [notifEnabled, setNotifEnabled] = useState(false);
       }
       new Notification(title, { body });
     } catch {
-      // מונע קריסת דפדפן באנדרואיד אם מערכת ההתראות חסומה
+      // מונע קריסת דפדפן באנדרואיד
     }
   };
 
@@ -177,6 +179,31 @@ const [notifEnabled, setNotifEnabled] = useState(false);
     }
   };
 
+  const renderOrderStatusBadge = (ord: OrderDoc) => {
+    if (ord.status === "custom" && ord.customStatusMessage) {
+      return `💬 ${ord.customStatusMessage}`;
+    }
+    if (ord.status === "out_for_delivery") {
+      return "🛵 המשלוח בדרך אליך!";
+    }
+    if (ord.status === "ready") {
+      return ord.orderType === "delivery" ? "🛵 המשלוח מוכן ויוצא לדרך!" : "✅ ההזמנה שלך מוכנה!";
+    }
+    if (ord.status === "preparing") {
+      return "☕ בהכנה כרגע";
+    }
+    if (ord.status === "pending") {
+      return "⏳ התקבלה — ממתינה להכנה";
+    }
+    if (ord.status === "completed") {
+      return "🤝 הושלמה";
+    }
+    if (ord.status === "canceled_by_admin") {
+      return "❌ בוטלה ע״י המקום";
+    }
+    return "בוטלה";
+  };
+
   useEffect(() => {
     myOrders.forEach((ord) => {
       const prev = prevStatusesRef.current[ord.id];
@@ -188,7 +215,19 @@ const [notifEnabled, setNotifEnabled] = useState(false);
       prevStatusesRef.current[ord.id] = currentKey;
     });
   }, [myOrders]);
-  // קטגוריות שמכילות פריטים או תתי-קטגוריות לתצוגת תפריט אמיתי
+
+  const activeStatuses = ["pending", "preparing", "ready", "out_for_delivery", "custom"];
+  const activeOrders = myOrders.filter((o) => activeStatuses.includes(o.status));
+  const pastOrders = myOrders.filter((o) => !activeStatuses.includes(o.status));
+  const hasCanceledByAdmin = myOrders.some((o) => o.status === "canceled_by_admin");
+  const lastCompletedOrder = myOrders.find((o) => o.status !== "canceled_by_admin");
+
+  const categories = settings.categories || [];
+  const getCategoryDisplayName = (cat: MenuCategory) => {
+    if (!cat.parentId) return cat.name;
+    const parent = categories.find((p) => p.id === cat.parentId);
+    return parent ? `${parent.name} — ${cat.name}` : cat.name;
+  };
   const categoriesWithItems = categories.filter((c) => (c.items || []).length > 0);
   const displayedSections =
     selectedCatId === "ALL"
@@ -327,31 +366,6 @@ const [notifEnabled, setNotifEnabled] = useState(false);
     }
   };
 
-  const renderOrderStatusBadge = (ord: OrderDoc) => {
-    if (ord.status === "custom" && ord.customStatusMessage) {
-      return `💬 ${ord.customStatusMessage}`;
-    }
-    if (ord.status === "out_for_delivery") {
-      return "🛵 המשלוח בדרך אליך!";
-    }
-    if (ord.status === "ready") {
-      return ord.orderType === "delivery" ? "🛵 המשלוח מוכן ויוצא לדרך!" : "✅ ההזמנה שלך מוכנה!";
-    }
-    if (ord.status === "preparing") {
-      return "☕ בהכנה כרגע";
-    }
-    if (ord.status === "pending") {
-      return "⏳ התקבלה — ממתינה להכנה";
-    }
-    if (ord.status === "completed") {
-      return "🤝 הושלמה";
-    }
-    if (ord.status === "canceled_by_admin") {
-      return "❌ בוטלה ע״י המקום";
-    }
-    return "בוטלה";
-  };
-
   const canProceedToStep3 =
     orderType === "pickup" || deliveryAddress.trim().length > 0;
 
@@ -396,7 +410,9 @@ const [notifEnabled, setNotifEnabled] = useState(false);
               onClick={() => setRatingModalOpen(true)}
               className="px-3 py-2 rounded-xl bg-stone-800 hover:bg-amber-500/20 text-amber-400 border border-amber-500/40 text-xs sm:text-sm font-bold transition cursor-pointer"
             >
-			<button
+              ⭐ דרג אותנו
+            </button>
+            <button
               onClick={requestPhoneNotifications}
               className={`px-3 py-2 rounded-xl border text-xs sm:text-sm font-bold transition cursor-pointer ${
                 notifEnabled
@@ -405,8 +421,6 @@ const [notifEnabled, setNotifEnabled] = useState(false);
               }`}
             >
               {notifEnabled ? "🔔 התראות פעילות" : "🔕 הפעל התראות"}
-            </button>
-              ⭐ דרג אותנו
             </button>
             <ContactCartBtn phone={settings.cartPhone} />
             <NavigateButton wazeLink={settings.wazeLink} />
@@ -506,7 +520,6 @@ const [notifEnabled, setNotifEnabled] = useState(false);
         {/* שלב 1: תפריט בית קפה אמיתי עם לשוניות קטגוריות וכרטיסי מנות עשירים */}
         {step === 1 && (
           <div className="space-y-6">
-            {/* שורת לשוניות קטגוריות כמו בוולט / תפריט מסעדה */}
             {categoriesWithItems.length > 0 && (
               <div className="flex items-center gap-2 overflow-x-auto pb-2 no-scrollbar">
                 <button
@@ -529,18 +542,17 @@ const [notifEnabled, setNotifEnabled] = useState(false);
                         : "bg-stone-900 text-stone-300 border-stone-800 hover:border-stone-700"
                     }`}
                   >
-                    {cat.name}
+                    {getCategoryDisplayName(cat)}
                   </button>
                 ))}
               </div>
             )}
 
-            {/* תצוגת סקשנים של התפריט */}
             {displayedSections.map((section) => (
               <section key={section.id} className="space-y-3">
                 <div className="flex items-center gap-3">
                   <h2 className="text-lg sm:text-xl font-black text-amber-400">
-                    {section.name}
+                    {getCategoryDisplayName(section)}
                   </h2>
                   <div className="h-px flex-1 bg-stone-800" />
                 </div>
@@ -582,7 +594,8 @@ const [notifEnabled, setNotifEnabled] = useState(false);
 
                           {item.optionsText && !out && (
                             <div className="text-[11px] text-stone-400">
-                              ✨ התאמה אישית: <span className="text-stone-300">{item.optionsText}</span>
+                              ✨ התאמה אישית:{" "}
+                              <span className="text-stone-300">{item.optionsText}</span>
                             </div>
                           )}
 
