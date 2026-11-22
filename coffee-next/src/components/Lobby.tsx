@@ -79,9 +79,9 @@ export default function Lobby({
   const [ratingSending, setRatingSending] = useState(false);
   const [ratingSentSuccess, setRatingSentSuccess] = useState(false);
 
-  // תהליך הזמנה
+  // תהליך הזמנה ותצוגת תפריט
   const [step, setStep] = useState<1 | 2 | 3>(1);
-  const [activeCatId, setActiveCatId] = useState<string | null>(null);
+  const [selectedCatId, setSelectedCatId] = useState<string>("ALL");
   const [cart, setCart] = useState<CartItem[]>([]);
 
   // חלון התאמה אישית לפריט
@@ -101,7 +101,6 @@ export default function Lobby({
   const [submitting, setSubmitting] = useState(false);
   const [orderSuccess, setOrderSuccess] = useState(false);
 
-  // 1. האזנה להגדרות, קישורי תשלום וקטגוריות
   useEffect(() => {
     return onSnapshot(doc(db, "config", "settings"), (snap) => {
       if (snap.exists()) {
@@ -110,7 +109,6 @@ export default function Lobby({
     });
   }, []);
 
-  // 2. טעינת פרופיל שמור של הלקוח
   useEffect(() => {
     return onSnapshot(doc(db, "coffee_users", userEmail), (snap) => {
       if (snap.exists()) {
@@ -123,7 +121,6 @@ export default function Lobby({
     });
   }, [userEmail]);
 
-  // 3. הזמנות הלקוח בזמן אמת
   useEffect(() => {
     const q = query(collection(db, "orders"), where("userEmail", "==", userEmail));
     return onSnapshot(q, (snap) => {
@@ -138,30 +135,19 @@ export default function Lobby({
   const activeStatuses = ["pending", "preparing", "ready", "out_for_delivery", "custom"];
   const activeOrders = myOrders.filter((o) => activeStatuses.includes(o.status));
   const pastOrders = myOrders.filter((o) => !activeStatuses.includes(o.status));
-
   const hasCanceledByAdmin = myOrders.some((o) => o.status === "canceled_by_admin");
   const lastCompletedOrder = myOrders.find((o) => o.status !== "canceled_by_admin");
 
   const categories = settings.categories || [];
-  const currentCategory = activeCatId
-    ? categories.find((c) => c.id === activeCatId) || null
-    : null;
-  const visibleSubCategories = categories.filter(
-    (c) => (c.parentId || null) === (activeCatId || null)
-  );
-
-  const getBreadcrumbs = () => {
-    const path: MenuCategory[] = [];
-    let curr = currentCategory;
-    while (curr) {
-      path.unshift(curr);
-      curr = curr.parentId ? categories.find((c) => c.id === curr!.parentId) || null : null;
-    }
-    return path;
-  };
+  // קטגוריות שמכילות פריטים או תתי-קטגוריות לתצוגת תפריט אמיתי
+  const categoriesWithItems = categories.filter((c) => (c.items || []).length > 0);
+  const displayedSections =
+    selectedCatId === "ALL"
+      ? categoriesWithItems
+      : categoriesWithItems.filter((c) => c.id === selectedCatId);
 
   const handleSelectMenuItem = (item: MenuItem) => {
-    if (item.inStock === false) return;
+    if (item.inStock === false || settings.isCartClosed) return;
     const opts = (item.optionsText || "")
       .split(",")
       .map((s) => s.trim())
@@ -208,6 +194,9 @@ export default function Lobby({
       return copy;
     });
   };
+
+  const getItemQtyInCart = (itemId: string) =>
+    cart.filter((c) => c.itemId === itemId).reduce((sum, c) => sum + c.quantity, 0);
 
   const totalPrice = cart.reduce((sum, item) => sum + item.price * item.quantity, 0);
   const totalItemsCount = cart.reduce((sum, item) => sum + item.quantity, 0);
@@ -266,7 +255,6 @@ export default function Lobby({
     await updateDoc(doc(db, "orders", orderId), { status: "canceled" });
   };
 
-  // שליחת דירוג נפרד (לא מתוך ההזמנה)
   const handleSendReview = async (e: React.FormEvent) => {
     e.preventDefault();
     setRatingSending(true);
@@ -321,7 +309,7 @@ export default function Lobby({
   const displayedOrdersList = ordersTab === "active" ? activeOrders : pastOrders;
 
   return (
-    <div className="min-h-screen pb-28">
+    <div className="min-h-screen pb-28 bg-stone-950 text-stone-100">
       {/* הודעה רצה בראש האתר */}
       {settings.announcement && (
         <div className="bg-amber-500 text-stone-950 text-xs sm:text-sm font-black py-2 px-4 text-center">
@@ -334,7 +322,12 @@ export default function Lobby({
         <div className="max-w-4xl mx-auto flex flex-wrap items-center justify-between gap-2">
           <div className="flex items-center gap-2">
             <span className="text-2xl">☕</span>
-            <span className="font-black text-lg text-amber-400">עגלת הקפה</span>
+            <div>
+              <span className="font-black text-lg text-amber-400 block leading-none">
+                עגלת הקפה
+              </span>
+              <span className="text-[11px] text-stone-400">תפריט טרי ומהיר</span>
+            </div>
           </div>
 
           <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
@@ -427,11 +420,11 @@ export default function Lobby({
         )}
 
         {/* אינדיקטור שלבים */}
-        <div className="grid grid-cols-3 gap-2 mb-6">
+        <div className="grid grid-cols-3 gap-2 mb-5">
           {[
-            { num: 1, label: "1. בחירת תפריט" },
+            { num: 1, label: "1. תפריט" },
             { num: 2, label: "2. משלוח / במקום" },
-            { num: 3, label: "3. אישור הזמנה" },
+            { num: 3, label: "3. סיכום ואישור" },
           ].map((s) => (
             <button
               key={s.num}
@@ -451,96 +444,124 @@ export default function Lobby({
           ))}
         </div>
 
-        {/* שלב 1: בחירת תפריט היררכי */}
+        {/* שלב 1: תפריט בית קפה אמיתי עם לשוניות קטגוריות וכרטיסי מנות עשירים */}
         {step === 1 && (
-          <div className="space-y-4">
-            <div className="flex flex-wrap items-center gap-2 bg-stone-900 px-3.5 py-2.5 rounded-xl border border-stone-800 text-xs">
-              <button
-                onClick={() => setActiveCatId(null)}
-                className={`font-bold cursor-pointer ${
-                  !activeCatId ? "text-amber-400" : "text-stone-300 hover:text-white"
-                }`}
-              >
-                🏠 תפריט ראשי
-              </button>
-              {getBreadcrumbs().map((c) => (
-                <React.Fragment key={c.id}>
-                  <span className="text-stone-600">/</span>
-                  <button
-                    onClick={() => setActiveCatId(c.id)}
-                    className={`font-bold cursor-pointer ${
-                      c.id === activeCatId ? "text-amber-400" : "text-stone-300 hover:text-white"
-                    }`}
-                  >
-                    {c.name}
-                  </button>
-                </React.Fragment>
-              ))}
-            </div>
-
-            {visibleSubCategories.length > 0 && (
-              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-                {visibleSubCategories.map((cat) => (
+          <div className="space-y-6">
+            {/* שורת לשוניות קטגוריות כמו בוולט / תפריט מסעדה */}
+            {categoriesWithItems.length > 0 && (
+              <div className="flex items-center gap-2 overflow-x-auto pb-2 no-scrollbar">
+                <button
+                  onClick={() => setSelectedCatId("ALL")}
+                  className={`px-4 py-2 rounded-full text-xs sm:text-sm font-black whitespace-nowrap border transition cursor-pointer ${
+                    selectedCatId === "ALL"
+                      ? "bg-amber-500 text-stone-950 border-amber-400 shadow-md"
+                      : "bg-stone-900 text-stone-300 border-stone-800 hover:border-stone-700"
+                  }`}
+                >
+                  🍽️ כל התפריט
+                </button>
+                {categoriesWithItems.map((cat) => (
                   <button
                     key={cat.id}
-                    onClick={() => setActiveCatId(cat.id)}
-                    className="bg-stone-900 hover:border-amber-500 border border-stone-800 rounded-2xl p-4 text-right transition cursor-pointer shadow"
+                    onClick={() => setSelectedCatId(cat.id)}
+                    className={`px-4 py-2 rounded-full text-xs sm:text-sm font-black whitespace-nowrap border transition cursor-pointer ${
+                      selectedCatId === cat.id
+                        ? "bg-amber-500 text-stone-950 border-amber-400 shadow-md"
+                        : "bg-stone-900 text-stone-300 border-stone-800 hover:border-stone-700"
+                    }`}
                   >
-                    <div className="font-black text-base text-white">📁 {cat.name}</div>
-                    <div className="text-xs text-amber-400 mt-1">כניסה לקטגוריה ←</div>
+                    {cat.name}
                   </button>
                 ))}
               </div>
             )}
 
-            {currentCategory && (
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2">
-                {(currentCategory.items || []).map((item) => {
-                  const out = item.inStock === false;
-                  return (
-                    <button
-                      key={item.id}
-                      disabled={out || settings.isCartClosed}
-                      onClick={() => handleSelectMenuItem(item)}
-                      className={`text-right p-4 rounded-2xl border flex items-center justify-between gap-3 transition ${
-                        out
-                          ? "bg-stone-900/40 border-stone-800 opacity-50 cursor-not-allowed"
-                          : "bg-stone-900 hover:border-amber-500 border-stone-800 cursor-pointer"
-                      }`}
-                    >
-                      <div className="flex items-center gap-3">
-                        {item.imageUrl && (
+            {/* תצוגת סקשנים של התפריט */}
+            {displayedSections.map((section) => (
+              <section key={section.id} className="space-y-3">
+                <div className="flex items-center gap-3">
+                  <h2 className="text-lg sm:text-xl font-black text-amber-400">
+                    {section.name}
+                  </h2>
+                  <div className="h-px flex-1 bg-stone-800" />
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+                  {(section.items || []).map((item) => {
+                    const out = item.inStock === false;
+                    const qtyInCart = getItemQtyInCart(item.id);
+
+                    return (
+                      <div
+                        key={item.id}
+                        onClick={() => handleSelectMenuItem(item)}
+                        className={`group rounded-2xl border p-3.5 flex items-center justify-between gap-3.5 transition ${
+                          out
+                            ? "bg-stone-900/40 border-stone-800/60 opacity-50 cursor-not-allowed"
+                            : qtyInCart > 0
+                            ? "bg-stone-900 border-amber-500/80 shadow-lg cursor-pointer"
+                            : "bg-stone-900/90 hover:bg-stone-900 hover:border-amber-500/60 border-stone-800 cursor-pointer"
+                        }`}
+                      >
+                        <div className="flex-1 min-w-0 space-y-1">
+                          <div className="flex items-center gap-2">
+                            <h3 className="font-black text-white text-base truncate">
+                              {item.name}
+                            </h3>
+                            {qtyInCart > 0 && (
+                              <span className="px-2 py-0.5 rounded-full bg-amber-500 text-stone-950 text-[11px] font-black">
+                                {qtyInCart} בסל
+                              </span>
+                            )}
+                          </div>
+
+                          {item.description && (
+                            <p className="text-xs text-stone-400 line-clamp-2 leading-relaxed">
+                              {item.description}
+                            </p>
+                          )}
+
+                          {item.optionsText && !out && (
+                            <div className="text-[11px] text-stone-400">
+                              ✨ התאמה אישית: <span className="text-stone-300">{item.optionsText}</span>
+                            </div>
+                          )}
+
+                          <div className="pt-1.5 flex items-center justify-between">
+                            <span className="text-amber-400 font-black text-base font-mono">
+                              ₪{item.price}
+                            </span>
+
+                            {out ? (
+                              <span className="text-xs font-bold text-red-400">אזל להיום</span>
+                            ) : (
+                              <span className="px-3 py-1 rounded-xl bg-amber-500/15 group-hover:bg-amber-500 text-amber-400 group-hover:text-stone-950 text-xs font-black transition">
+                                + הוסף
+                              </span>
+                            )}
+                          </div>
+                        </div>
+
+                        {item.imageUrl ? (
                           <img
                             src={item.imageUrl}
                             alt={item.name}
-                            className="w-16 h-16 rounded-xl object-cover border border-stone-700 shrink-0"
+                            className="w-24 h-24 rounded-2xl object-cover border border-stone-700/80 shrink-0"
                           />
-                        )}
-                        <div>
-                          <div className="font-bold text-white text-base">{item.name}</div>
-                          {item.description && (
-                            <p className="text-xs text-stone-400 mt-0.5">{item.description}</p>
-                          )}
-                          <div className="text-[11px] text-amber-400/90 mt-1">
-                            {out
-                              ? "❌ אזל מהמלאי להיום"
-                              : item.optionsText
-                              ? `אפשרויות: ${item.optionsText}`
-                              : "+ לחץ להוספה לסל"}
+                        ) : (
+                          <div className="w-20 h-20 rounded-2xl bg-stone-800/70 border border-stone-800 flex items-center justify-center text-2xl shrink-0">
+                            ☕
                           </div>
-                        </div>
+                        )}
                       </div>
-                      <div className="text-amber-400 font-black text-lg font-mono shrink-0">
-                        ₪{item.price}
-                      </div>
-                    </button>
-                  );
-                })}
-              </div>
-            )}
+                    );
+                  })}
+                </div>
+              </section>
+            ))}
 
-            {categories.length === 0 && (
-              <div className="text-center py-10 text-stone-400 bg-stone-900 rounded-2xl border border-stone-800">
+            {categoriesWithItems.length === 0 && (
+              <div className="text-center py-12 text-stone-400 bg-stone-900 rounded-2xl border border-stone-800">
                 התפריט מתעדכן כרגע... ☕
               </div>
             )}
@@ -657,7 +678,6 @@ export default function Lobby({
               </div>
             </div>
 
-            {/* כפתורי תשלום ב-Bit / PayBox אם הוגדרו באדמין */}
             {(settings.bitLink || settings.payboxLink) && (
               <div className="bg-stone-950/80 border border-stone-800 rounded-2xl p-3.5 space-y-2">
                 <div className="text-xs font-bold text-stone-300">💳 תשלום מהיר באפליקציה:</div>
@@ -816,7 +836,7 @@ export default function Lobby({
         </div>
       )}
 
-      {/* חלונית דירוג נפרדת (⭐ דרג אותנו) */}
+      {/* חלונית דירוג נפרדת */}
       {ratingModalOpen && (
         <div
           className="fixed inset-0 z-50 bg-black/75 flex items-center justify-center p-4"
@@ -882,7 +902,7 @@ export default function Lobby({
         </div>
       )}
 
-      {/* סרגל צד: ההזמנות שלי (הזמנות פעילות + הזמנות עבר, ללא דירוג בתוכן) */}
+      {/* סרגל צד: ההזמנות שלי (פעילות + עבר) */}
       {sidebarOpen && (
         <div
           className="fixed inset-0 z-50 bg-black/75 flex justify-end"
@@ -902,7 +922,6 @@ export default function Lobby({
               </button>
             </div>
 
-            {/* לשוניות: הזמנות פעילות / הזמנות עבר */}
             <div className="grid grid-cols-2 gap-2">
               <button
                 onClick={() => setOrdersTab("active")}
@@ -1013,7 +1032,6 @@ export default function Lobby({
 
                     <div className="text-xs font-bold text-amber-400">סה״כ: ₪{ord.totalPrice}</div>
 
-                    {/* כפתורי תשלום מהירים אם הוגדרו באדמין */}
                     {isActive && (settings.bitLink || settings.payboxLink) && (
                       <div className="flex gap-2 pt-1">
                         {settings.bitLink && (
@@ -1039,7 +1057,6 @@ export default function Lobby({
                       </div>
                     )}
 
-                    {/* בהזמנות עבר: כפתור הזמן שוב בלחיצה */}
                     {!isActive && (
                       <button
                         onClick={() => {
