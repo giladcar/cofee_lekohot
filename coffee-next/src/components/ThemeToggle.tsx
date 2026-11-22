@@ -8,18 +8,19 @@ export default function ThemeToggle() {
   useEffect(() => {
     const saved = localStorage.getItem("coffee_theme");
     if (saved === "light") {
-      document.documentElement.classList.add("coffee-light");
+      document.documentElement.classList.add("light");
       setIsLight(true);
     }
   }, []);
 
   const toggleTheme = () => {
-    if (isLight) {
-      document.documentElement.classList.remove("coffee-light");
+    const html = document.documentElement;
+    if (html.classList.contains("light")) {
+      html.classList.remove("light");
       localStorage.setItem("coffee_theme", "dark");
       setIsLight(false);
     } else {
-      document.documentElement.classList.add("coffee-light");
+      html.classList.add("light");
       localStorage.setItem("coffee_theme", "light");
       setIsLight(true);
     }
@@ -27,11 +28,12 @@ export default function ThemeToggle() {
 
   return (
     <button
+      type="button"
       onClick={toggleTheme}
-      title={isLight ? "עבור למצב כהה" : "עבור למצב בהיר"}
-      className="px-3 py-2 rounded-xl bg-stone-800 hover:bg-stone-700 border border-stone-700 text-sm font-bold transition cursor-pointer"
+      title="החלף מצב תצוגה"
+      className="px-3 py-2 rounded-xl bg-stone-800 hover:bg-stone-700 text-stone-200 border border-stone-700 text-xs sm:text-sm font-bold transition cursor-pointer"
     >
-      {isLight ? "🌙" : "☀️"}
+      {isLight ? "🌙 כהה" : "☀️ בהיר"}
     </button>
   );
 }

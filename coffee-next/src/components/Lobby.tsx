@@ -131,7 +131,43 @@ export default function Lobby({
       setMyOrders(list);
     });
   }, [userEmail]);
+const [notifEnabled, setNotifEnabled] = useState(false);
+  const prevStatusesRef = React.useRef<Record<string, string>>({});
 
+  useEffect(() => {
+    if (typeof window !== "undefined" && "Notification" in window) {
+      setNotifEnabled(Notification.permission === "granted");
+    }
+  }, []);
+
+  const requestPhoneNotifications = async () => {
+    if (typeof window === "undefined" || !("Notification" in window)) {
+      alert("הדפדפן במכשיר זה אינו תומך בהתראות קופצות.");
+      return;
+    }
+    const perm = await Notification.requestPermission();
+    setNotifEnabled(perm === "granted");
+    if (perm === "granted") {
+      new Notification("☕ עגלת הקפה", {
+        body: "התראות הופעלו! נעדכן אותך מיד כשההזמנה מוכנה או בדרך.",
+      });
+    }
+  };
+
+  // הקפצת התראה לטלפון בכל פעם שסטטוס הזמנה של הלקוח משתנה
+  useEffect(() => {
+    myOrders.forEach((ord) => {
+      const prev = prevStatusesRef.current[ord.id];
+      const currentKey = `${ord.status}:${ord.customStatusMessage || ""}`;
+      if (prev && prev !== currentKey) {
+        const msg = renderOrderStatusBadge(ord);
+        if (typeof window !== "undefined" && "Notification" in window && Notification.permission === "granted") {
+          new Notification("☕ עדכון בהזמנה שלך!", { body: msg });
+        }
+      }
+      prevStatusesRef.current[ord.id] = currentKey;
+    });
+  }, [myOrders]);
   const activeStatuses = ["pending", "preparing", "ready", "out_for_delivery", "custom"];
   const activeOrders = myOrders.filter((o) => activeStatuses.includes(o.status));
   const pastOrders = myOrders.filter((o) => !activeStatuses.includes(o.status));
@@ -347,6 +383,16 @@ export default function Lobby({
               onClick={() => setRatingModalOpen(true)}
               className="px-3 py-2 rounded-xl bg-stone-800 hover:bg-amber-500/20 text-amber-400 border border-amber-500/40 text-xs sm:text-sm font-bold transition cursor-pointer"
             >
+			<button
+              onClick={requestPhoneNotifications}
+              className={`px-3 py-2 rounded-xl border text-xs sm:text-sm font-bold transition cursor-pointer ${
+                notifEnabled
+                  ? "bg-emerald-950/60 text-emerald-300 border-emerald-700"
+                  : "bg-stone-800 hover:bg-amber-500/20 text-amber-400 border-amber-500/40"
+              }`}
+            >
+              {notifEnabled ? "🔔 התראות פעילות" : "🔕 הפעל התראות"}
+            </button>
               ⭐ דרג אותנו
             </button>
             <ContactCartBtn phone={settings.cartPhone} />
