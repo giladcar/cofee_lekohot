@@ -16,8 +16,13 @@ export const viewport: Viewport = {
 };
 
 export const metadata: Metadata = {
-  title: 'עגלת הקפה - הזמנה בקליק',
+  title: 'עגלת הקפה',
   description: 'מערכת חכמה להזמנת קפה ומאפים',
+  manifest: '/manifest.webmanifest',
+  icons: {
+    icon: '/icon?v=2',
+    apple: '/apple-icon?v=2',
+  },
 };
 
 export default function RootLayout({
