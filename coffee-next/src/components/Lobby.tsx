@@ -41,6 +41,9 @@ interface SettingsData {
   bitLink?: string;
   payboxLink?: string;
   announcement?: string;
+  showPublicRating?: boolean;
+publicRatingAverage?: string;
+publicRatingCount?: number;
   categories?: MenuCategory[];
 }
 
