@@ -62,7 +62,15 @@ interface OrderDoc {
   status: string;
   customStatusMessage?: string;
 }
-
+interface PublicReview {
+  id: string;
+  firstName?: string;
+  lastName?: string;
+  rating: number;
+  comment?: string;
+  createdAt?: string;
+  isPublished?: boolean;
+}
 export default function Lobby({
   userEmail,
   onLogout,
@@ -80,6 +88,8 @@ export default function Lobby({
   const prevStatusesRef = useRef<Record<string, string>>({});
 
   // מודאל דירוג נפרד
+  const [publicReviews, setPublicReviews] = useState<PublicReview[]>([]);
+const [reviewsViewOpen, setReviewsViewOpen] = useState(false);
   const [ratingModalOpen, setRatingModalOpen] = useState(false);
   const [ratingStars, setRatingStars] = useState<number>(5);
   const [ratingComment, setRatingComment] = useState("");
@@ -121,7 +131,14 @@ export default function Lobby({
       }
     });
   }, []);
-
+useEffect(() => {
+  const q = query(collection(db, "reviews"), where("isPublished", "==", true));
+  return onSnapshot(q, (snap) => {
+    const list = snap.docs.map((d) => ({ id: d.id, ...d.data() } as PublicReview));
+    list.sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || "")));
+    setPublicReviews(list);
+  });
+}, []);
   useEffect(() => {
     return onSnapshot(doc(db, "coffee_users", userEmail), (snap) => {
       if (snap.exists()) {
