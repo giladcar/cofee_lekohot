@@ -375,6 +375,26 @@ export default function Lobby({
         comment: ratingComment.trim(),
         createdAt: new Date().toISOString(),
       });
+
+      // חישוב מחדש של הממוצע והכמות ושמירה ל-config/settings בזמן אמת
+      const { getDocs } = await import("firebase/firestore");
+      const allSnap = await getDocs(collection(db, "reviews"));
+      const count = allSnap.size;
+      let total = 0;
+      allSnap.forEach((d) => {
+        total += Number(d.data().rating) || 5;
+      });
+      const avg = count > 0 ? (total / count).toFixed(1) : "0.0";
+
+      await setDoc(
+        doc(db, "config", "settings"),
+        {
+          publicRatingAverage: avg,
+          publicRatingCount: count,
+        },
+        { merge: true }
+      );
+
       setRatingSentSuccess(true);
       setRatingComment("");
       setTimeout(() => {
