@@ -401,16 +401,16 @@ export default function Lobby({
       )}
 
       {/* באנר דירוג לקוחות מפורסם */}
-      {settings.showPublicRating && (
+      {settings.showPublicRating && Number(settings.publicRatingCount || 0) > 0 && (
         <div
           onClick={() => setRatingModalOpen(true)}
           className="bg-stone-900 border-b border-amber-500/40 py-2 px-4 text-center text-xs sm:text-sm cursor-pointer hover:bg-stone-800 transition"
         >
           <span className="text-amber-400 font-black">
-            ★ {settings.publicRatingAverage || "5.0"}
+            ★ {settings.publicRatingAverage}
           </span>{" "}
           <span className="text-stone-200">
-            דירוג הלקוחות שלנו ({settings.publicRatingCount || 1} ביקורות) •{" "}
+            דירוג הלקוחות שלנו ({settings.publicRatingCount} ביקורות) •{" "}
           </span>
           <span className="text-amber-400 underline font-bold">דרג גם אתה</span>
         </div>
