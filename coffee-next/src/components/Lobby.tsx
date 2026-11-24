@@ -62,6 +62,7 @@ interface OrderDoc {
   status: string;
   customStatusMessage?: string;
 }
+
 interface PublicReview {
   id: string;
   firstName?: string;
@@ -71,6 +72,7 @@ interface PublicReview {
   createdAt?: string;
   isPublished?: boolean;
 }
+
 export default function Lobby({
   userEmail,
   onLogout,
@@ -87,9 +89,9 @@ export default function Lobby({
   const [notifEnabled, setNotifEnabled] = useState(false);
   const prevStatusesRef = useRef<Record<string, string>>({});
 
-  // מודאל דירוג נפרד
+  // מודאל דירוג נפרד + תצוגת תגובות מפורסמות
   const [publicReviews, setPublicReviews] = useState<PublicReview[]>([]);
-const [reviewsViewOpen, setReviewsViewOpen] = useState(false);
+  const [reviewsViewOpen, setReviewsViewOpen] = useState(false);
   const [ratingModalOpen, setRatingModalOpen] = useState(false);
   const [ratingStars, setRatingStars] = useState<number>(5);
   const [ratingComment, setRatingComment] = useState("");
@@ -131,14 +133,16 @@ const [reviewsViewOpen, setReviewsViewOpen] = useState(false);
       }
     });
   }, []);
-useEffect(() => {
-  const q = query(collection(db, "reviews"), where("isPublished", "==", true));
-  return onSnapshot(q, (snap) => {
-    const list = snap.docs.map((d) => ({ id: d.id, ...d.data() } as PublicReview));
-    list.sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || "")));
-    setPublicReviews(list);
-  });
-}, []);
+
+  useEffect(() => {
+    const q = query(collection(db, "reviews"), where("isPublished", "==", true));
+    return onSnapshot(q, (snap) => {
+      const list = snap.docs.map((d) => ({ id: d.id, ...d.data() } as PublicReview));
+      list.sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || "")));
+      setPublicReviews(list);
+    });
+  }, []);
+
   useEffect(() => {
     return onSnapshot(doc(db, "coffee_users", userEmail), (snap) => {
       if (snap.exists()) {
@@ -212,6 +216,7 @@ useEffect(() => {
       alert("לא ניתן להפעיל התראות בדפדפן זה.");
     }
   };
+
   const renderOrderStatusBadge = (ord: OrderDoc) => {
     if (ord.status === "custom" && ord.customStatusMessage) {
       return `💬 ${ord.customStatusMessage}`;
@@ -261,7 +266,6 @@ useEffect(() => {
     const parent = categories.find((p) => p.id === cat.parentId);
     return parent ? `${parent.name} — ${cat.name}` : cat.name;
   };
-  
 
   const categoriesWithItems = categories;
   const displayedSections =
@@ -430,28 +434,43 @@ useEffect(() => {
 
   return (
     <div className="min-h-screen pb-28 bg-stone-950 text-stone-100">
-    {/* הודעה רצה בראש האתר */}
+      {/* הודעה רצה בראש האתר */}
       {settings.announcement && (
         <div className="bg-amber-500 text-stone-950 text-xs sm:text-sm font-black py-2 px-4 text-center">
           📢 {settings.announcement}
         </div>
       )}
 
-      {/* באנר דירוג לקוחות מפורסם */}
+      {/* באנר דירוג לקוחות מפורסם + כפתור קריאת תגובות */}
       {settings.showPublicRating && Number(settings.publicRatingCount || 0) > 0 && (
-        <div
-          onClick={() => setRatingModalOpen(true)}
-          className="bg-stone-900 border-b border-amber-500/40 py-2 px-4 text-center text-xs sm:text-sm cursor-pointer hover:bg-stone-800 transition"
-        >
-          <span className="text-amber-400 font-black">
-            ★ {settings.publicRatingAverage}
-          </span>{" "}
-          <span className="text-stone-200">
-            דירוג הלקוחות שלנו ({settings.publicRatingCount} ביקורות) •{" "}
-          </span>
-          <span className="text-amber-400 underline font-bold">דרג גם אתה</span>
+        <div className="bg-stone-900 border-b border-amber-500/40 py-2 px-4 text-center text-xs sm:text-sm flex flex-wrap items-center justify-center gap-2">
+          <div>
+            <span className="text-amber-400 font-black">
+              ★ {settings.publicRatingAverage}
+            </span>{" "}
+            <span className="text-stone-200">
+              דירוג הלקוחות שלנו ({settings.publicRatingCount} ביקורות)
+            </span>
+          </div>
+          {publicReviews.length > 0 && (
+            <button
+              type="button"
+              onClick={() => setReviewsViewOpen(true)}
+              className="px-2.5 py-0.5 rounded-full bg-amber-500/20 hover:bg-amber-500 text-amber-300 hover:text-stone-950 font-bold text-xs transition cursor-pointer"
+            >
+              💬 קרא תגובות ({publicReviews.length})
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => setRatingModalOpen(true)}
+            className="text-amber-400 underline font-bold cursor-pointer"
+          >
+            דרג גם אתה
+          </button>
         </div>
       )}
+
       {/* סרגל עליון */}
       <header className="sticky top-0 z-30 bg-stone-950/90 backdrop-blur border-b border-stone-800 px-4 py-3">
         <div className="max-w-4xl mx-auto flex flex-wrap items-center justify-between gap-2">
@@ -628,84 +647,84 @@ useEffect(() => {
                   </h2>
                   <div className="h-px flex-1 bg-stone-800" />
                 </div>
-{(section.items || []).length === 0 ? (
-  <div className="text-xs text-stone-500 bg-stone-900/50 border border-stone-800/70 rounded-2xl p-4 text-center">
-    אין פריטים בקטגוריה זו כרגע ☕
-  </div>
-) : (
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
-                  {(section.items || []).map((item) => {
-                    const out = item.inStock === false;
-                    const qtyInCart = getItemQtyInCart(item.id);
+                {(section.items || []).length === 0 ? (
+                  <div className="text-xs text-stone-500 bg-stone-900/50 border border-stone-800/70 rounded-2xl p-4 text-center">
+                    אין פריטים בקטגוריה זו כרגע ☕
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+                    {(section.items || []).map((item) => {
+                      const out = item.inStock === false;
+                      const qtyInCart = getItemQtyInCart(item.id);
 
-                    return (
-                      <div
-                        key={item.id}
-                        onClick={() => handleSelectMenuItem(item)}
-                        className={`group rounded-2xl border p-3.5 flex items-center justify-between gap-3.5 transition ${
-                          out
-                            ? "bg-stone-900/40 border-stone-800/60 opacity-50 cursor-not-allowed"
-                            : qtyInCart > 0
-                            ? "bg-stone-900 border-amber-500/80 shadow-lg cursor-pointer"
-                            : "bg-stone-900/90 hover:bg-stone-900 hover:border-amber-500/60 border-stone-800 cursor-pointer"
-                        }`}
-                      >
-                        <div className="flex-1 min-w-0 space-y-1">
-                          <div className="flex items-center gap-2">
-                            <h3 className="font-black text-white text-base truncate">
-                              {item.name}
-                            </h3>
-                            {qtyInCart > 0 && (
-                              <span className="px-2 py-0.5 rounded-full bg-amber-500 text-stone-950 text-[11px] font-black">
-                                {qtyInCart} בסל
-                              </span>
+                      return (
+                        <div
+                          key={item.id}
+                          onClick={() => handleSelectMenuItem(item)}
+                          className={`group rounded-2xl border p-3.5 flex items-center justify-between gap-3.5 transition ${
+                            out
+                              ? "bg-stone-900/40 border-stone-800/60 opacity-50 cursor-not-allowed"
+                              : qtyInCart > 0
+                              ? "bg-stone-900 border-amber-500/80 shadow-lg cursor-pointer"
+                              : "bg-stone-900/90 hover:bg-stone-900 hover:border-amber-500/60 border-stone-800 cursor-pointer"
+                          }`}
+                        >
+                          <div className="flex-1 min-w-0 space-y-1">
+                            <div className="flex items-center gap-2">
+                              <h3 className="font-black text-white text-base truncate">
+                                {item.name}
+                              </h3>
+                              {qtyInCart > 0 && (
+                                <span className="px-2 py-0.5 rounded-full bg-amber-500 text-stone-950 text-[11px] font-black">
+                                  {qtyInCart} בסל
+                                </span>
+                              )}
+                            </div>
+
+                            {item.description && (
+                              <p className="text-xs text-stone-400 line-clamp-2 leading-relaxed">
+                                {item.description}
+                              </p>
                             )}
+
+                            {item.optionsText && !out && (
+                              <div className="text-[11px] text-stone-400">
+                                ✨ התאמה אישית:{" "}
+                                <span className="text-stone-300">{item.optionsText}</span>
+                              </div>
+                            )}
+
+                            <div className="pt-1.5 flex items-center justify-between">
+                              <span className="text-amber-400 font-black text-base font-mono">
+                                ₪{item.price}
+                              </span>
+
+                              {out ? (
+                                <span className="text-xs font-bold text-red-400">אזל להיום</span>
+                              ) : (
+                                <span className="px-3 py-1 rounded-xl bg-amber-500/15 group-hover:bg-amber-500 text-amber-400 group-hover:text-stone-950 text-xs font-black transition">
+                                  + הוסף
+                                </span>
+                              )}
+                            </div>
                           </div>
 
-                          {item.description && (
-                            <p className="text-xs text-stone-400 line-clamp-2 leading-relaxed">
-                              {item.description}
-                            </p>
-                          )}
-
-                          {item.optionsText && !out && (
-                            <div className="text-[11px] text-stone-400">
-                              ✨ התאמה אישית:{" "}
-                              <span className="text-stone-300">{item.optionsText}</span>
+                          {item.imageUrl ? (
+                            <img
+                              src={item.imageUrl}
+                              alt={item.name}
+                              className="w-24 h-24 rounded-2xl object-cover border border-stone-700/80 shrink-0"
+                            />
+                          ) : (
+                            <div className="w-20 h-20 rounded-2xl bg-stone-800/70 border border-stone-800 flex items-center justify-center text-2xl shrink-0">
+                              ☕
                             </div>
                           )}
-
-                          <div className="pt-1.5 flex items-center justify-between">
-                            <span className="text-amber-400 font-black text-base font-mono">
-                              ₪{item.price}
-                            </span>
-
-                            {out ? (
-                              <span className="text-xs font-bold text-red-400">אזל להיום</span>
-                            ) : (
-                              <span className="px-3 py-1 rounded-xl bg-amber-500/15 group-hover:bg-amber-500 text-amber-400 group-hover:text-stone-950 text-xs font-black transition">
-                                + הוסף
-                              </span>
-                            )}
-                          </div>
                         </div>
-
-                        {item.imageUrl ? (
-                          <img
-                            src={item.imageUrl}
-                            alt={item.name}
-                            className="w-24 h-24 rounded-2xl object-cover border border-stone-700/80 shrink-0"
-                          />
-                        ) : (
-                          <div className="w-20 h-20 rounded-2xl bg-stone-800/70 border border-stone-800 flex items-center justify-center text-2xl shrink-0">
-                            ☕
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-				)}
+                      );
+                    })}
+                  </div>
+                )}
               </section>
             ))}
 
@@ -980,6 +999,64 @@ useEffect(() => {
               className="w-full py-3 rounded-xl bg-amber-500 hover:bg-amber-400 text-stone-950 font-black text-sm cursor-pointer"
             >
               הוסף לסל (₪{customizingItem.price})
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* חלונית צפייה במשובים ותגובות שפורסמו */}
+      {reviewsViewOpen && (
+        <div
+          className="fixed inset-0 z-50 bg-black/75 flex items-center justify-center p-4"
+          onClick={() => setReviewsViewOpen(false)}
+        >
+          <div
+            className="bg-stone-900 border border-amber-500/50 rounded-3xl p-6 max-w-md w-full max-h-[80vh] overflow-y-auto space-y-4 shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between border-b border-stone-800 pb-3">
+              <h3 className="text-lg font-black text-amber-400">
+                💬 מה הלקוחות אומרים עלינו (★ {settings.publicRatingAverage})
+              </h3>
+              <button
+                type="button"
+                onClick={() => setReviewsViewOpen(false)}
+                className="px-2.5 py-1 rounded-lg bg-stone-800 text-stone-300 text-xs cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="space-y-3">
+              {publicReviews.map((rev) => (
+                <div
+                  key={rev.id}
+                  className="bg-stone-950 border border-stone-800 rounded-2xl p-3.5 space-y-1.5"
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="font-bold text-sm text-white">
+                      {rev.firstName || "לקוח"} {rev.lastName || ""}
+                    </span>
+                    <span className="text-amber-400 text-xs">
+                      {"★".repeat(Number(rev.rating) || 5)}
+                    </span>
+                  </div>
+                  {rev.comment && (
+                    <p className="text-xs text-stone-300 leading-relaxed">"{rev.comment}"</p>
+                  )}
+                </div>
+              ))}
+            </div>
+
+            <button
+              type="button"
+              onClick={() => {
+                setReviewsViewOpen(false);
+                setRatingModalOpen(true);
+              }}
+              className="w-full py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-stone-950 font-black text-xs cursor-pointer"
+            >
+              ⭐ הוסף דירוג משלך
             </button>
           </div>
         </div>
